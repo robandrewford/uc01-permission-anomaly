@@ -208,9 +208,9 @@ def run_experiment(
         mlflow.log_metrics(metrics)
         
         # Generate versioned model directory name
-        # Format: {model_type}_{timestamp}_run{mlflow_run_id[:8]}
+        # Format: {model_type}_{timestamp}_run_{mlflow_run_id[:8]}
         key_metric = f"auc{metrics.get('auc_roc', 0):.2f}".replace(".", "")
-        version_name = f"ensemble_{timestamp}_run{run_id[:8]}"
+        version_name = f"ensemble_{timestamp}_run_{run_id[:8]}"
         versioned_model_dir = MODEL_DIR / version_name
         
         # Save model artifacts to versioned directory
