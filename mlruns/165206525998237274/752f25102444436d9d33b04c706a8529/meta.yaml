@@ -1,0 +1,14 @@
+artifact_uri: /Users/robertford/Repos/avepoint-aiml-usecase-tools/avepoint-ml/uc01-permission-anomaly/mlruns/165206525998237274/752f25102444436d9d33b04c706a8529/artifacts
+end_time: 1765418336052
+entry_point_name: ''
+experiment_id: '165206525998237274'
+lifecycle_stage: active
+run_id: 752f25102444436d9d33b04c706a8529
+run_name: ensemble_20251210_175831
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1765418311830
+status: 3
+tags: []
+user_id: robertford

@@ -1,0 +1,25 @@
+{
+  "if_weight": 0.4,
+  "ae_weight": 0.6,
+  "threshold": 29.160758274502474,
+  "feature_cols": [
+    "total_permissions",
+    "permission_velocity_7d",
+    "permission_velocity_30d",
+    "cross_department_ratio",
+    "sensitivity_weighted_score",
+    "permission_breadth",
+    "admin_permission_flag",
+    "external_share_ratio",
+    "off_hours_access_ratio",
+    "pct_full_control",
+    "pct_direct_grants",
+    "highly_confidential_count",
+    "recent_grant_ratio",
+    "perm_zscore",
+    "sens_zscore"
+  ],
+  "mlflow_run_id": "0b8d9aad955544e8b63d9d7f35a2196f",
+  "mlflow_experiment_id": "165206525998237274",
+  "model_path": "/Users/robertford/Repos/avepoint-aiml-usecase-tools/avepoint-ml/uc01-permission-anomaly/models/ensemble_20251210_211252_run0b8d9aad"
+}
