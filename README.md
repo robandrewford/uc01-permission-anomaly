@@ -25,6 +25,7 @@ uv add scikit-learn pyod tensorflow pandas polars mlflow shap matplotlib seaborn
 ```sh
 uc01-permission-anomaly/
 ├── notebooks/
+│   ├── 00_generate_synthetic_data.py # Synthetic raw data generation
 │   ├── 01_ingest_permissions.py      # Bronze layer
 │   ├── 02_clean_transform.py         # Silver layer
 │   ├── 03_feature_engineering.py     # Feature computation
@@ -36,8 +37,9 @@ uc01-permission-anomaly/
 │   ├── models.py                     # Model classes
 │   └── evaluation.py                 # Metrics computation
 ├── data/
-│   ├── synthetic/                    # Generated test data
-│   └── raw/                          # Sample AvePoint exports
+│   ├── bronze/                    # Raw data
+│   ├── silver/                    # Cleaned fact and dimension tables
+│   └── gold/                      # Sample AvePoint exports
 ├── models/                           # Trained model artifacts
 └── tests/
     └── test_features.py
