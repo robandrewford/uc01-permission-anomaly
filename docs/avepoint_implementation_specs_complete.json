@@ -1,0 +1,5973 @@
+{
+  "metadata": {
+    "title": "AvePoint ML/GenAI Implementation Specifications",
+    "version": "1.0.0",
+    "created": "2025-12-10",
+    "description": "Detailed implementation specifications generated from metaprompts for 20 Fabric Workloads"
+  },
+  "implementations": [
+    {
+      "id": "UC-01",
+      "name": "Permission Anomaly Detection",
+      "specification": {
+        "model_architecture": {
+          "primary_algorithm": "Isolation Forest",
+          "justification": "Isolation Forest excels at high-dimensional anomaly detection without requiring labeled data. Permission telemetry is inherently high-dimensional (user \u00d7 resource \u00d7 permission type \u00d7 time) and anomalies are rare by definition.",
+          "secondary_algorithm": "Autoencoder (Deep Learning)",
+          "ensemble_approach": "Two-stage: Isolation Forest for initial screening (fast), Autoencoder for confirmation on flagged cases (accurate). Final score = weighted average (0.4 \u00d7 IF_score + 0.6 \u00d7 AE_reconstruction_error).",
+          "hyperparameter_ranges": {
+            "isolation_forest": {
+              "n_estimators": [
+                100,
+                200,
+                500
+              ],
+              "max_samples": [
+                "auto",
+                256,
+                512
+              ],
+              "contamination": [
+                0.01,
+                0.05,
+                0.1
+              ],
+              "max_features": [
+                0.5,
+                0.75,
+                1.0
+              ]
+            },
+            "autoencoder": {
+              "encoding_dim": [
+                32,
+                64,
+                128
+              ],
+              "hidden_layers": [
+                [
+                  256,
+                  128
+                ],
+                [
+                  512,
+                  256,
+                  128
+                ]
+              ],
+              "dropout_rate": [
+                0.1,
+                0.2,
+                0.3
+              ],
+              "learning_rate": [
+                0.001,
+                0.0001
+              ]
+            }
+          },
+          "threshold_calibration": "Use validation set with injected anomalies to calibrate threshold at 95% recall for known anomaly patterns. Dynamic threshold adjustment based on rolling false positive rate feedback from SOC analysts."
+        },
+        "feature_engineering": {
+          "raw_features": [
+            {
+              "name": "permission_grants",
+              "source": "AvePoint Permission Inventory",
+              "description": "Direct and inherited permission assignments"
+            },
+            {
+              "name": "sharing_links",
+              "source": "AvePoint Sharing Report",
+              "description": "Anonymous, organization-wide, and specific-person links"
+            },
+            {
+              "name": "group_memberships",
+              "source": "AvePoint Group Inventory",
+              "description": "Security group, M365 group, distribution list memberships"
+            },
+            {
+              "name": "guest_access",
+              "source": "AvePoint External User Report",
+              "description": "B2B guest permissions and sharing"
+            }
+          ],
+          "derived_features": [
+            {
+              "name": "permission_velocity_7d",
+              "formula": "COUNT(new_permissions) / 7",
+              "description": "Rate of new permission acquisition over 7 days"
+            },
+            {
+              "name": "permission_velocity_30d",
+              "formula": "COUNT(new_permissions) / 30",
+              "description": "Rate of new permission acquisition over 30 days"
+            },
+            {
+              "name": "cross_department_ratio",
+              "formula": "COUNT(permissions_outside_dept) / COUNT(total_permissions)",
+              "description": "Proportion of permissions to resources outside user's department"
+            },
+            {
+              "name": "sensitivity_weighted_score",
+              "formula": "SUM(permission_count \u00d7 sensitivity_weight)",
+              "description": "Permissions weighted by content sensitivity label"
+            },
+            {
+              "name": "external_share_ratio",
+              "formula": "COUNT(external_shares) / COUNT(total_shares)",
+              "description": "Proportion of shares going to external recipients"
+            },
+            {
+              "name": "admin_permission_flag",
+              "formula": "MAX(is_admin_role)",
+              "description": "Binary flag for any admin-level permissions"
+            },
+            {
+              "name": "permission_breadth",
+              "formula": "COUNT(DISTINCT sites_accessed)",
+              "description": "Number of unique sites with permissions"
+            },
+            {
+              "name": "off_hours_access_ratio",
+              "formula": "COUNT(access_outside_business_hours) / COUNT(total_access)",
+              "description": "Proportion of access events outside 8am-6pm local time"
+            }
+          ],
+          "temporal_aggregations": {
+            "windows": [
+              "7_day",
+              "30_day",
+              "90_day"
+            ],
+            "aggregations": [
+              "sum",
+              "mean",
+              "max",
+              "stddev",
+              "trend_slope"
+            ]
+          },
+          "encoding_strategies": {
+            "user_role": "Target encoding with smoothing (m=10)",
+            "department": "Target encoding with smoothing (m=10)",
+            "content_type": "One-hot encoding (limited cardinality)",
+            "permission_type": "Ordinal encoding (Read < Contribute < Full Control)"
+          }
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "dim_users",
+              "columns": [
+                {
+                  "name": "user_id",
+                  "type": "STRING",
+                  "description": "Unique user identifier (GUID)"
+                },
+                {
+                  "name": "department",
+                  "type": "STRING",
+                  "description": "Organizational department"
+                },
+                {
+                  "name": "role",
+                  "type": "STRING",
+                  "description": "Job role/title category"
+                },
+                {
+                  "name": "hire_date",
+                  "type": "DATE",
+                  "description": "Employment start date"
+                },
+                {
+                  "name": "manager_id",
+                  "type": "STRING",
+                  "description": "Reporting manager user_id"
+                },
+                {
+                  "name": "location",
+                  "type": "STRING",
+                  "description": "Office location"
+                }
+              ],
+              "cardinality": 10000
+            },
+            {
+              "name": "dim_resources",
+              "columns": [
+                {
+                  "name": "resource_id",
+                  "type": "STRING",
+                  "description": "Unique resource identifier"
+                },
+                {
+                  "name": "resource_type",
+                  "type": "STRING",
+                  "description": "Site/Library/Folder/File/Team/Group"
+                },
+                {
+                  "name": "sensitivity_label",
+                  "type": "STRING",
+                  "description": "Public/Internal/Confidential/Highly Confidential"
+                },
+                {
+                  "name": "owning_department",
+                  "type": "STRING",
+                  "description": "Department that owns the resource"
+                },
+                {
+                  "name": "created_date",
+                  "type": "DATE",
+                  "description": "Resource creation date"
+                }
+              ],
+              "cardinality": 50000
+            },
+            {
+              "name": "fact_permissions",
+              "columns": [
+                {
+                  "name": "permission_id",
+                  "type": "STRING",
+                  "description": "Unique permission grant identifier"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING",
+                  "description": "FK to dim_users"
+                },
+                {
+                  "name": "resource_id",
+                  "type": "STRING",
+                  "description": "FK to dim_resources"
+                },
+                {
+                  "name": "permission_level",
+                  "type": "STRING",
+                  "description": "Read/Contribute/Full Control"
+                },
+                {
+                  "name": "grant_type",
+                  "type": "STRING",
+                  "description": "Direct/Inherited/Sharing Link"
+                },
+                {
+                  "name": "granted_date",
+                  "type": "TIMESTAMP",
+                  "description": "When permission was granted"
+                },
+                {
+                  "name": "granted_by",
+                  "type": "STRING",
+                  "description": "User who granted permission"
+                },
+                {
+                  "name": "is_external",
+                  "type": "BOOLEAN",
+                  "description": "Whether recipient is external"
+                }
+              ],
+              "cardinality": 500000
+            },
+            {
+              "name": "fact_access_events",
+              "columns": [
+                {
+                  "name": "event_id",
+                  "type": "STRING",
+                  "description": "Unique access event identifier"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING",
+                  "description": "FK to dim_users"
+                },
+                {
+                  "name": "resource_id",
+                  "type": "STRING",
+                  "description": "FK to dim_resources"
+                },
+                {
+                  "name": "event_timestamp",
+                  "type": "TIMESTAMP",
+                  "description": "When access occurred"
+                },
+                {
+                  "name": "event_type",
+                  "type": "STRING",
+                  "description": "View/Edit/Download/Share"
+                },
+                {
+                  "name": "client_ip",
+                  "type": "STRING",
+                  "description": "Source IP address"
+                },
+                {
+                  "name": "user_agent",
+                  "type": "STRING",
+                  "description": "Client application"
+                }
+              ],
+              "cardinality": 5000000
+            }
+          ],
+          "distribution_assumptions": {
+            "permissions_per_user": "Log-normal, mean=50, stddev=30",
+            "cross_department_access": "5% of users have >20% cross-department permissions (normal), inject 0.5% with >50% (anomalous)",
+            "permission_velocity": "Poisson, lambda=2 per week (normal), inject 1% with lambda=20 (anomalous)",
+            "sensitivity_access": "80% Public/Internal, 18% Confidential, 2% Highly Confidential (normal)"
+          },
+          "anomaly_injection": {
+            "types": [
+              {
+                "name": "permission_spike",
+                "description": "User gains 50+ permissions in 7 days",
+                "injection_rate": 0.005
+              },
+              {
+                "name": "cross_department_anomaly",
+                "description": "User suddenly accesses 5+ new departments",
+                "injection_rate": 0.003
+              },
+              {
+                "name": "sensitivity_escalation",
+                "description": "User gains Highly Confidential access without history",
+                "injection_rate": 0.002
+              },
+              {
+                "name": "admin_grant_anomaly",
+                "description": "Non-IT user receives admin permissions",
+                "injection_rate": 0.001
+              }
+            ],
+            "ground_truth_column": "is_anomaly"
+          }
+        },
+        "experiment_design": {
+          "experiment_name": "uc01_permission_anomaly_detection",
+          "tags": {
+            "domain": "access_permissions",
+            "capability": "anomaly_detection",
+            "outcome": "reduce_security_risk",
+            "owner": "data_science_team"
+          },
+          "parameters_to_track": [
+            "model_type",
+            "contamination_rate",
+            "n_estimators",
+            "encoding_dim",
+            "threshold_percentile",
+            "feature_set_version",
+            "training_window_days"
+          ],
+          "metrics_to_log": [
+            {
+              "name": "precision_at_100",
+              "description": "Precision when reviewing top 100 anomalies"
+            },
+            {
+              "name": "precision_at_500",
+              "description": "Precision when reviewing top 500 anomalies"
+            },
+            {
+              "name": "recall_at_threshold",
+              "description": "Recall at chosen anomaly threshold"
+            },
+            {
+              "name": "auc_roc",
+              "description": "Area under ROC curve"
+            },
+            {
+              "name": "false_positive_rate",
+              "description": "FPR at operating threshold"
+            },
+            {
+              "name": "alerts_per_day",
+              "description": "Expected daily alert volume"
+            },
+            {
+              "name": "mean_anomaly_score",
+              "description": "Average anomaly score across population"
+            },
+            {
+              "name": "score_distribution_skew",
+              "description": "Skewness of anomaly score distribution"
+            }
+          ],
+          "artifacts": [
+            "trained_model.pkl",
+            "threshold_config.json",
+            "feature_importance.csv",
+            "score_distribution.png",
+            "confusion_matrix.png"
+          ]
+        },
+        "evaluation_metrics": {
+          "primary_metric": {
+            "name": "precision_at_100",
+            "target": 0.7,
+            "rationale": "SOC analysts can review ~100 alerts/day; 70%+ actionable rate prevents alert fatigue"
+          },
+          "secondary_metrics": [
+            {
+              "name": "recall_at_threshold",
+              "target": 0.85,
+              "rationale": "Catch 85% of true anomalies"
+            },
+            {
+              "name": "auc_roc",
+              "target": 0.9,
+              "rationale": "Strong overall discrimination"
+            },
+            {
+              "name": "false_positive_rate",
+              "target": 0.05,
+              "rationale": "Max 5% of normal users flagged"
+            }
+          ],
+          "business_aligned_metrics": [
+            {
+              "name": "alert_volume",
+              "target": "50-150 per day",
+              "rationale": "Within SOC capacity"
+            },
+            {
+              "name": "analyst_review_time",
+              "target": "<5 min per alert",
+              "rationale": "Sufficient context provided"
+            },
+            {
+              "name": "time_to_triage",
+              "target": "<24 hours",
+              "rationale": "Same-day review for critical"
+            }
+          ],
+          "ab_testing_framework": {
+            "control": "Current rule-based alerting",
+            "treatment": "ML-based anomaly detection",
+            "metrics": [
+              "true_positive_rate",
+              "false_positive_rate",
+              "analyst_satisfaction"
+            ],
+            "duration": "4 weeks",
+            "sample_split": "50/50 by tenant"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              {
+                "name": "raw_permissions",
+                "description": "Raw permission snapshots from AvePoint API",
+                "refresh": "daily"
+              },
+              {
+                "name": "raw_access_events",
+                "description": "Raw access audit logs",
+                "refresh": "hourly"
+              },
+              {
+                "name": "raw_users",
+                "description": "User directory snapshot",
+                "refresh": "daily"
+              }
+            ],
+            "silver": [
+              {
+                "name": "cleaned_permissions",
+                "description": "Deduplicated, validated permissions",
+                "refresh": "daily"
+              },
+              {
+                "name": "user_permission_features",
+                "description": "Aggregated features per user",
+                "refresh": "daily"
+              },
+              {
+                "name": "permission_velocity",
+                "description": "Time-series of permission changes",
+                "refresh": "daily"
+              }
+            ],
+            "gold": [
+              {
+                "name": "anomaly_scores",
+                "description": "Per-user anomaly scores with explanations",
+                "refresh": "daily"
+              },
+              {
+                "name": "alert_queue",
+                "description": "Prioritized alerts for SOC review",
+                "refresh": "daily"
+              },
+              {
+                "name": "score_history",
+                "description": "Historical scores for trend analysis",
+                "refresh": "daily"
+              }
+            ]
+          },
+          "notebook_workflow": [
+            {
+              "order": 1,
+              "name": "01_ingest_permissions",
+              "description": "Pull data from AvePoint APIs to bronze"
+            },
+            {
+              "order": 2,
+              "name": "02_clean_transform",
+              "description": "Bronze to silver transformations"
+            },
+            {
+              "order": 3,
+              "name": "03_feature_engineering",
+              "description": "Compute derived features"
+            },
+            {
+              "order": 4,
+              "name": "04_model_training",
+              "description": "Train/retrain anomaly models (weekly)"
+            },
+            {
+              "order": 5,
+              "name": "05_batch_scoring",
+              "description": "Score all users daily"
+            },
+            {
+              "order": 6,
+              "name": "06_alert_generation",
+              "description": "Generate prioritized alert queue"
+            }
+          ],
+          "scheduling": {
+            "ingestion": "Daily at 02:00 UTC",
+            "feature_engineering": "Daily at 04:00 UTC",
+            "scoring": "Daily at 05:00 UTC",
+            "model_retraining": "Weekly on Sunday at 06:00 UTC"
+          },
+          "output_schema": {
+            "alerts_table": {
+              "columns": [
+                {
+                  "name": "alert_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_email",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_department",
+                  "type": "STRING"
+                },
+                {
+                  "name": "anomaly_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "anomaly_rank",
+                  "type": "INT"
+                },
+                {
+                  "name": "primary_anomaly_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "explanation",
+                  "type": "STRING"
+                },
+                {
+                  "name": "top_contributing_features",
+                  "type": "ARRAY<STRING>"
+                },
+                {
+                  "name": "recommended_action",
+                  "type": "STRING"
+                },
+                {
+                  "name": "created_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "severity",
+                  "type": "STRING"
+                }
+              ]
+            }
+          }
+        },
+        "python_packages": [
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0",
+            "purpose": "Isolation Forest, preprocessing"
+          },
+          {
+            "name": "pyod",
+            "version": ">=1.1.0",
+            "purpose": "Extended anomaly detection algorithms"
+          },
+          {
+            "name": "tensorflow",
+            "version": ">=2.14.0",
+            "purpose": "Autoencoder implementation"
+          },
+          {
+            "name": "pandas",
+            "version": ">=2.0.0",
+            "purpose": "Data manipulation"
+          },
+          {
+            "name": "polars",
+            "version": ">=0.19.0",
+            "purpose": "Fast data processing"
+          },
+          {
+            "name": "pyspark",
+            "version": ">=3.5.0",
+            "purpose": "Distributed processing in Fabric"
+          },
+          {
+            "name": "mlflow",
+            "version": ">=2.8.0",
+            "purpose": "Experiment tracking"
+          },
+          {
+            "name": "shap",
+            "version": ">=0.43.0",
+            "purpose": "Feature importance explanations"
+          },
+          {
+            "name": "matplotlib",
+            "version": ">=3.8.0",
+            "purpose": "Visualization"
+          },
+          {
+            "name": "seaborn",
+            "version": ">=0.13.0",
+            "purpose": "Statistical visualization"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Daily anomaly score per user (0-100 scale)",
+            "secondary": "Ranked alert list with explanations",
+            "tertiary": "Weekly trend report"
+          },
+          "visualization": {
+            "dashboard_components": [
+              "Anomaly score distribution histogram",
+              "Top 50 anomalous users table",
+              "Department-level risk heatmap",
+              "7-day anomaly trend time-series",
+              "Feature contribution waterfall chart per user"
+            ],
+            "recommended_tool": "Power BI embedded in AvePoint Confidence Platform"
+          },
+          "integration_points": [
+            {
+              "system": "AvePoint Insights Dashboard",
+              "method": "Direct table read from gold layer"
+            },
+            {
+              "system": "Microsoft Sentinel",
+              "method": "CEF syslog export of alerts"
+            },
+            {
+              "system": "ServiceNow",
+              "method": "REST API incident creation"
+            },
+            {
+              "system": "Email",
+              "method": "Daily digest to security team DL"
+            }
+          ],
+          "roi_metrics": {
+            "primary": {
+              "metric": "Hours saved on permission review",
+              "baseline": "40 hours/week manual review",
+              "target": "8 hours/week with ML prioritization",
+              "calculation": "32 hours \u00d7 $75/hour \u00d7 52 weeks = $124,800/year"
+            },
+            "secondary": {
+              "metric": "Risk reduction",
+              "baseline": "Unknown permission anomalies",
+              "target": "95% visibility into permission risks",
+              "calculation": "Avoided breach cost \u00d7 probability reduction"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-02",
+      "name": "Least-Privilege Scoring",
+      "specification": {
+        "model_architecture": {
+          "primary_algorithm": "LightGBM Classifier",
+          "justification": "LightGBM handles tabular data with mixed feature types efficiently, supports class imbalance natively, and provides fast inference for scoring millions of permission-user pairs.",
+          "class_imbalance_handling": "SMOTE oversampling of 'excessive' class combined with class_weight='balanced' parameter. Target ratio 1:3 (excessive:necessary).",
+          "score_aggregation": "User-level Least-Privilege Score = 100 \u00d7 (1 - (\u03a3 P(excessive|permission_i) \u00d7 weight_i) / \u03a3 weight_i), where weight = sensitivity_level of resource.",
+          "calibration_approach": "Platt scaling (sigmoid) calibration on held-out validation set to ensure probability outputs are well-calibrated for threshold decisions."
+        },
+        "feature_engineering": {
+          "permission_attributes": [
+            {
+              "name": "grant_type",
+              "type": "categorical",
+              "values": [
+                "direct",
+                "inherited",
+                "sharing_link",
+                "group_membership"
+              ]
+            },
+            {
+              "name": "permission_level",
+              "type": "ordinal",
+              "values": [
+                "read",
+                "contribute",
+                "full_control"
+              ]
+            },
+            {
+              "name": "scope",
+              "type": "categorical",
+              "values": [
+                "file",
+                "folder",
+                "library",
+                "site",
+                "site_collection"
+              ]
+            },
+            {
+              "name": "sensitivity_level",
+              "type": "ordinal",
+              "values": [
+                "public",
+                "internal",
+                "confidential",
+                "highly_confidential"
+              ]
+            },
+            {
+              "name": "permission_age_days",
+              "type": "numeric",
+              "description": "Days since permission was granted"
+            }
+          ],
+          "usage_signals": [
+            {
+              "name": "last_access_days_ago",
+              "type": "numeric",
+              "description": "Days since user last accessed this resource"
+            },
+            {
+              "name": "access_count_90d",
+              "type": "numeric",
+              "description": "Number of accesses in past 90 days"
+            },
+            {
+              "name": "access_recency_score",
+              "type": "numeric",
+              "formula": "1 / (1 + log(days_since_access + 1))"
+            },
+            {
+              "name": "access_trend",
+              "type": "numeric",
+              "description": "Slope of access frequency over 90 days"
+            }
+          ],
+          "peer_comparison": [
+            {
+              "name": "dept_baseline_has_permission",
+              "type": "numeric",
+              "description": "% of department peers with same permission"
+            },
+            {
+              "name": "role_baseline_has_permission",
+              "type": "numeric",
+              "description": "% of same-role peers with same permission"
+            },
+            {
+              "name": "deviation_from_dept_baseline",
+              "type": "numeric",
+              "formula": "user_permission_count - AVG(dept_permission_count)"
+            }
+          ],
+          "temporal_features": [
+            {
+              "name": "permission_tenure_days",
+              "type": "numeric",
+              "description": "Days user has held this permission"
+            },
+            {
+              "name": "usage_trend_slope",
+              "type": "numeric",
+              "description": "Linear trend in usage frequency"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "permission_grants",
+              "columns": [
+                {
+                  "name": "permission_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "resource_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "grant_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "permission_level",
+                  "type": "STRING"
+                },
+                {
+                  "name": "granted_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "last_access_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "access_count_90d",
+                  "type": "INT"
+                },
+                {
+                  "name": "is_necessary",
+                  "type": "BOOLEAN",
+                  "description": "Label: True if accessed in past 90 days"
+                }
+              ],
+              "cardinality": 1000000
+            },
+            {
+              "name": "user_attributes",
+              "columns": [
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "department",
+                  "type": "STRING"
+                },
+                {
+                  "name": "role",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tenure_days",
+                  "type": "INT"
+                },
+                {
+                  "name": "is_active",
+                  "type": "BOOLEAN"
+                }
+              ],
+              "cardinality": 15000
+            },
+            {
+              "name": "resource_attributes",
+              "columns": [
+                {
+                  "name": "resource_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "sensitivity_label",
+                  "type": "STRING"
+                },
+                {
+                  "name": "owning_department",
+                  "type": "STRING"
+                },
+                {
+                  "name": "resource_type",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 75000
+            }
+          ],
+          "labeling_logic": {
+            "necessary": "Permission accessed at least once in past 90 days",
+            "excessive": "Permission not accessed in past 90 days AND permission_age > 30 days",
+            "uncertain": "Permission granted within past 30 days with no access (exclude from training)"
+          }
+        },
+        "experiment_design": {
+          "experiment_name": "uc02_least_privilege_scoring",
+          "tags": {
+            "domain": "access_permissions",
+            "capability": "classification",
+            "outcome": "reduce_security_risk"
+          },
+          "parameters_to_track": [
+            "n_estimators",
+            "max_depth",
+            "learning_rate",
+            "class_weight",
+            "threshold",
+            "aggregation_method"
+          ],
+          "metrics_to_log": [
+            "f1_score",
+            "precision",
+            "recall",
+            "auc_roc",
+            "brier_score",
+            "score_distribution_mean",
+            "score_distribution_std"
+          ],
+          "model_versioning": "Semantic versioning (major.minor.patch) with automatic promotion based on F1 improvement > 2%"
+        },
+        "evaluation_metrics": {
+          "permission_level": {
+            "f1_score": {
+              "target": 0.8
+            },
+            "precision": {
+              "target": 0.85,
+              "rationale": "Avoid incorrectly flagging necessary permissions"
+            },
+            "recall": {
+              "target": 0.75
+            }
+          },
+          "user_level": {
+            "score_correlation_with_remediation": {
+              "target": 0.7,
+              "description": "Correlation between low scores and actual permissions removed in remediation campaigns"
+            },
+            "score_distribution": {
+              "expected": "Right-skewed, mean ~70, median ~75"
+            }
+          },
+          "fairness": {
+            "demographic_parity": "Score distribution should not vary >10% across departments",
+            "equalized_odds": "FPR and FNR should not vary >5% across job levels"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_permissions",
+              "raw_access_logs",
+              "raw_user_directory"
+            ],
+            "silver": [
+              "enriched_permissions",
+              "user_permission_matrix",
+              "access_aggregates"
+            ],
+            "gold": [
+              "permission_predictions",
+              "user_scores",
+              "score_history",
+              "remediation_candidates"
+            ]
+          },
+          "feature_store": {
+            "enabled": true,
+            "features": [
+              "permission_features",
+              "user_features",
+              "peer_baseline_features"
+            ],
+            "refresh": "daily"
+          },
+          "batch_scoring_pipeline": {
+            "trigger": "daily at 06:00 UTC",
+            "parallelization": "partition by department",
+            "output": "gold.user_scores table"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "lightgbm",
+            "version": ">=4.1.0"
+          },
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "imbalanced-learn",
+            "version": ">=0.11.0",
+            "purpose": "SMOTE"
+          },
+          {
+            "name": "category_encoders",
+            "version": ">=2.6.0"
+          },
+          {
+            "name": "feature-engine",
+            "version": ">=1.6.0"
+          },
+          {
+            "name": "mlflow",
+            "version": ">=2.8.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "User Least-Privilege Score (0-100)",
+            "secondary": "Permission-level predictions with confidence",
+            "tertiary": "Remediation recommendation list"
+          },
+          "visualization": {
+            "dashboard_components": [
+              "Score distribution histogram",
+              "Department comparison bar chart",
+              "Score trend line over time",
+              "Top remediation candidates table"
+            ]
+          },
+          "roi_metrics": {
+            "primary": "Permissions remediated post-implementation",
+            "target": "20-40% reduction in excessive permissions",
+            "calculation": "Attack surface reduction = (permissions_removed / total_permissions) \u00d7 risk_weight"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-03",
+      "name": "External Sharing Risk Model",
+      "specification": {
+        "model_architecture": {
+          "primary_algorithm": "XGBoost Multi-Class Classifier",
+          "risk_tiers": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low"
+          ],
+          "feature_fusion": "Early fusion - concatenate content, behavioral, and contextual features before model input",
+          "ordinal_approach": "Treat as ordinal classification using cumulative link model wrapper for probability outputs",
+          "confidence_scoring": "Softmax probabilities per tier; confidence = max(probabilities)"
+        },
+        "feature_engineering": {
+          "content_features": [
+            {
+              "name": "sensitivity_label",
+              "type": "ordinal"
+            },
+            {
+              "name": "file_type",
+              "type": "categorical"
+            },
+            {
+              "name": "file_size_mb",
+              "type": "numeric"
+            },
+            {
+              "name": "contains_pii_keywords",
+              "type": "boolean"
+            },
+            {
+              "name": "document_classification_score",
+              "type": "numeric"
+            }
+          ],
+          "recipient_features": [
+            {
+              "name": "recipient_domain",
+              "type": "categorical"
+            },
+            {
+              "name": "domain_reputation_score",
+              "type": "numeric",
+              "source": "Microsoft Defender TI or similar"
+            },
+            {
+              "name": "is_known_vendor",
+              "type": "boolean"
+            },
+            {
+              "name": "is_first_time_recipient",
+              "type": "boolean"
+            },
+            {
+              "name": "recipient_country_risk",
+              "type": "ordinal"
+            }
+          ],
+          "sharer_features": [
+            {
+              "name": "sharer_department",
+              "type": "categorical"
+            },
+            {
+              "name": "sharer_role_level",
+              "type": "ordinal"
+            },
+            {
+              "name": "sharer_historical_share_volume",
+              "type": "numeric"
+            },
+            {
+              "name": "sharer_previous_risk_flags",
+              "type": "numeric"
+            }
+          ],
+          "contextual_features": [
+            {
+              "name": "share_time_hour",
+              "type": "numeric"
+            },
+            {
+              "name": "is_off_hours",
+              "type": "boolean"
+            },
+            {
+              "name": "is_bulk_share",
+              "type": "boolean",
+              "threshold": ">10 shares in 1 hour"
+            },
+            {
+              "name": "sharing_method",
+              "type": "categorical",
+              "values": [
+                "anonymous_link",
+                "specific_person",
+                "guest_access"
+              ]
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "external_shares",
+              "columns": [
+                {
+                  "name": "share_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "sharer_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "resource_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "recipient_email",
+                  "type": "STRING"
+                },
+                {
+                  "name": "recipient_domain",
+                  "type": "STRING"
+                },
+                {
+                  "name": "share_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "sharing_method",
+                  "type": "STRING"
+                },
+                {
+                  "name": "risk_tier",
+                  "type": "STRING",
+                  "description": "Label: Critical/High/Medium/Low"
+                }
+              ],
+              "cardinality": 200000
+            },
+            {
+              "name": "domain_reputation",
+              "columns": [
+                {
+                  "name": "domain",
+                  "type": "STRING"
+                },
+                {
+                  "name": "reputation_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "is_known_vendor",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "threat_indicators",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": 50000
+            }
+          ],
+          "labeling_guidelines": {
+            "Critical": "Highly Confidential content to unknown/suspicious domain OR anonymous link to sensitive content",
+            "High": "Confidential content to first-time recipient OR bulk external sharing",
+            "Medium": "Internal content to unknown domain OR off-hours sharing of sensitive content",
+            "Low": "Public content OR sharing to known vendor domain"
+          }
+        },
+        "experiment_design": {
+          "experiment_name": "uc03_external_sharing_risk",
+          "class_weighting": {
+            "Critical": 10,
+            "High": 5,
+            "Medium": 2,
+            "Low": 1
+          },
+          "threshold_tuning": "Per-class threshold optimization to balance precision/recall by tier",
+          "cost_sensitive": "False negative on Critical = 10\u00d7 cost of false positive on Low"
+        },
+        "evaluation_metrics": {
+          "per_class": {
+            "precision": {},
+            "recall": {},
+            "f1": {}
+          },
+          "weighted_macro_f1": {
+            "target": 0.75
+          },
+          "critical_recall": {
+            "target": 0.95,
+            "rationale": "Must catch critical risks"
+          },
+          "alert_volume": {
+            "target": "<200 Critical+High alerts per day"
+          }
+        },
+        "fabric_workload_structure": {
+          "scoring_mode": "Near-real-time (within 15 minutes of share event)",
+          "pipeline": [
+            "Event ingestion",
+            "Feature enrichment",
+            "Model scoring",
+            "Alert generation"
+          ],
+          "siem_output": "CEF format for Sentinel/Splunk integration"
+        },
+        "python_packages": [
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "spacy",
+            "version": ">=3.7.0",
+            "purpose": "Content keyword extraction"
+          },
+          {
+            "name": "sentence-transformers",
+            "version": ">=2.2.0",
+            "purpose": "Content embedding if needed"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "Risk-tiered external share inventory with real-time alerts",
+          "visualization": [
+            "Risk heatmap by department",
+            "External sharing trend over time",
+            "Top risky recipients table"
+          ],
+          "roi_metrics": {
+            "primary": "SOC alert reduction",
+            "target": "60-80% reduction in alert fatigue",
+            "secondary": "High-risk shares remediated within 24 hours"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-04",
+      "name": "Permission Drift Forecasting",
+      "specification": {
+        "model_architecture": {
+          "primary_algorithm": "Prophet",
+          "justification": "Prophet handles multiple seasonality (weekly, monthly, quarterly review cycles), is robust to missing data, and provides interpretable components (trend, seasonality, holidays).",
+          "hierarchical_approach": "Bottom-up: Forecast at user level, aggregate to department, then tenant. Reconcile using MinTrace optimal combination.",
+          "changepoint_detection": "Automatic changepoint detection with n_changepoints=25, changepoint_prior_scale=0.05 for intervention effects",
+          "uncertainty_quantification": "80% and 95% prediction intervals via MCMC sampling"
+        },
+        "feature_engineering": {
+          "target_variable": {
+            "name": "permission_count",
+            "alternatives": [
+              "permission_score (weighted)",
+              "unique_resources_accessible"
+            ]
+          },
+          "exogenous_regressors": [
+            {
+              "name": "headcount_change",
+              "description": "Net new hires minus departures"
+            },
+            {
+              "name": "project_starts",
+              "description": "Count of new projects initiated"
+            },
+            {
+              "name": "review_event",
+              "description": "Binary flag for access review occurrence"
+            },
+            {
+              "name": "reorg_event",
+              "description": "Binary flag for organizational restructuring"
+            }
+          ],
+          "calendar_features": [
+            {
+              "name": "fiscal_quarter_end",
+              "type": "binary"
+            },
+            {
+              "name": "holiday_window",
+              "type": "binary"
+            },
+            {
+              "name": "review_cycle",
+              "type": "categorical",
+              "values": [
+                "pre_review",
+                "review",
+                "post_review"
+              ]
+            }
+          ],
+          "aggregation_granularity": "Weekly snapshots for user level, daily for tenant level"
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "permission_snapshots",
+              "columns": [
+                {
+                  "name": "snapshot_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "entity_type",
+                  "type": "STRING",
+                  "values": [
+                    "user",
+                    "department",
+                    "tenant"
+                  ]
+                },
+                {
+                  "name": "entity_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "permission_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "permission_score",
+                  "type": "FLOAT"
+                }
+              ],
+              "time_range": "2 years historical",
+              "frequency": "weekly"
+            },
+            {
+              "name": "event_calendar",
+              "columns": [
+                {
+                  "name": "event_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "event_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "event_scope",
+                  "type": "STRING"
+                }
+              ]
+            }
+          ],
+          "trend_injection": "Linear growth of 2% per month with quarterly seasonality (10% spike at quarter end)",
+          "intervention_effects": "Access reviews reduce permissions by 15% with 2-week decay back to trend"
+        },
+        "experiment_design": {
+          "cross_validation": "Expanding window with 90-day initial training, 30-day increments, 30/60/90-day horizons",
+          "forecast_horizons": [
+            7,
+            30,
+            60,
+            90
+          ],
+          "hyperparameter_tuning": [
+            "changepoint_prior_scale",
+            "seasonality_prior_scale",
+            "seasonality_mode"
+          ],
+          "backtesting": "12-month rolling backtest with monthly retraining"
+        },
+        "evaluation_metrics": {
+          "point_forecast": {
+            "MAE": {},
+            "MAPE": {
+              "target": "<10%"
+            },
+            "RMSE": {}
+          },
+          "interval_metrics": {
+            "coverage_80": {
+              "target": 0.8
+            },
+            "coverage_95": {
+              "target": 0.95
+            },
+            "interval_width": {}
+          },
+          "directional_accuracy": {
+            "target": 0.85,
+            "description": "Correctly predicting increase vs. decrease"
+          },
+          "threshold_crossing": {
+            "target": 0.9,
+            "description": "Accuracy of predicting when policy threshold breached"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_permission_snapshots"
+            ],
+            "silver": [
+              "aggregated_permission_timeseries",
+              "event_calendar"
+            ],
+            "gold": [
+              "forecasts_30d",
+              "forecasts_60d",
+              "forecasts_90d",
+              "threshold_alerts"
+            ]
+          },
+          "forecast_pipeline": {
+            "trigger": "Weekly on Monday at 03:00 UTC",
+            "output": "Forecasts for all entities at all horizons"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "prophet",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "neuralprophet",
+            "version": ">=0.7.0",
+            "purpose": "Alternative with AR components"
+          },
+          {
+            "name": "statsforecast",
+            "version": ">=1.6.0",
+            "purpose": "Fast statistical baselines"
+          },
+          {
+            "name": "scikit-hts",
+            "version": ">=0.6.0",
+            "purpose": "Hierarchical reconciliation"
+          },
+          {
+            "name": "plotly",
+            "version": ">=5.18.0",
+            "purpose": "Interactive forecast visualization"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "30/60/90-day permission forecasts with prediction intervals and threshold alerts",
+          "visualization": [
+            "Forecast chart with confidence bands",
+            "Threshold breach timeline",
+            "Department comparison forecasts"
+          ],
+          "governance_integration": "Proactive access review triggers when forecast exceeds policy threshold",
+          "roi_metrics": {
+            "primary": "Compliance gaps prevented",
+            "calculation": "Avoided audit findings \u00d7 cost per finding ($10K-50K)"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-05",
+      "name": "Sensitive Data Classification",
+      "specification": {
+        "model_architecture": {
+          "pattern_layer": {
+            "tool": "Microsoft Presidio + custom regex",
+            "entities": [
+              "SSN",
+              "credit_card",
+              "phone",
+              "email",
+              "passport",
+              "drivers_license",
+              "bank_account",
+              "health_id"
+            ]
+          },
+          "transformer_model": {
+            "base": "microsoft/deberta-v3-base",
+            "fine_tuning": "Multi-label classification head with binary cross-entropy loss",
+            "domain_variants": {
+              "healthcare": "emilyalsentzer/Bio_ClinicalBERT",
+              "financial": "ProsusAI/finbert",
+              "legal": "nlpaueb/legal-bert-base-uncased"
+            }
+          },
+          "ensemble_strategy": "Pattern layer provides high-precision flags; transformer provides contextual classification. Final label = pattern_detected OR transformer_confidence > 0.7"
+        },
+        "feature_engineering": {
+          "text_extraction": {
+            "office_documents": "python-docx, openpyxl, python-pptx",
+            "pdf": "pypdf, pdfplumber for tables",
+            "email": "extract-msg, email library"
+          },
+          "text_preprocessing": {
+            "tokenization": "DeBERTa tokenizer (max_length=512)",
+            "chunking": "Sliding window with 256 token overlap for documents > 512 tokens",
+            "aggregation": "Max pooling across chunks for document-level label"
+          },
+          "metadata_features": [
+            {
+              "name": "file_type",
+              "type": "categorical"
+            },
+            {
+              "name": "file_location",
+              "type": "categorical"
+            },
+            {
+              "name": "author_department",
+              "type": "categorical"
+            },
+            {
+              "name": "existing_sensitivity_label",
+              "type": "categorical"
+            }
+          ],
+          "pattern_features": [
+            {
+              "name": "pii_entity_count",
+              "type": "numeric"
+            },
+            {
+              "name": "ssn_detected",
+              "type": "boolean"
+            },
+            {
+              "name": "credit_card_detected",
+              "type": "boolean"
+            },
+            {
+              "name": "health_term_density",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "document_corpus",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "text_content",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_path",
+                  "type": "STRING"
+                },
+                {
+                  "name": "author_department",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 100000
+            },
+            {
+              "name": "sensitivity_labels",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "contains_pii",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "contains_phi",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "contains_financial",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "contains_legal",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "contains_ip",
+                  "type": "BOOLEAN"
+                }
+              ]
+            }
+          ],
+          "label_taxonomy": {
+            "PII": [
+              "SSN",
+              "name+address",
+              "phone+email",
+              "biometric"
+            ],
+            "PHI": [
+              "diagnosis",
+              "treatment",
+              "prescription",
+              "lab_results"
+            ],
+            "Financial": [
+              "account_numbers",
+              "tax_info",
+              "salary",
+              "trading"
+            ],
+            "Legal": [
+              "contract",
+              "litigation",
+              "privilege",
+              "settlement"
+            ],
+            "IP": [
+              "patent",
+              "trade_secret",
+              "source_code",
+              "research"
+            ]
+          },
+          "synthetic_generation": "Use Faker library with domain-specific templates to generate realistic documents per category"
+        },
+        "experiment_design": {
+          "experiment_name": "uc05_sensitive_data_classification",
+          "fine_tuning_strategy": {
+            "initial": "Freeze transformer, train classification head (5 epochs)",
+            "full": "Unfreeze last 4 layers, train end-to-end (10 epochs, lower LR)"
+          },
+          "active_learning": {
+            "enabled": true,
+            "strategy": "Uncertainty sampling on low-confidence predictions",
+            "batch_size": 100,
+            "iterations": 5
+          },
+          "cross_domain_evaluation": "Train on Tenant A, evaluate on Tenant B to test generalization"
+        },
+        "evaluation_metrics": {
+          "per_label": {
+            "precision": {},
+            "recall": {},
+            "f1": {}
+          },
+          "micro_f1": {
+            "target": 0.85
+          },
+          "macro_f1": {
+            "target": 0.8
+          },
+          "label_coverage": {
+            "target": 0.95,
+            "description": "% of documents receiving at least one label"
+          },
+          "false_negative_analysis": "Manual review of FN for high-risk categories (PHI, financial)"
+        },
+        "fabric_workload_structure": {
+          "document_ingestion": {
+            "source": "AvePoint content crawl",
+            "trigger": "New/modified documents within 24 hours",
+            "batch_size": 10000
+          },
+          "classification_pipeline": [
+            "Text extraction",
+            "Pattern detection",
+            "Transformer inference",
+            "Label aggregation"
+          ],
+          "incremental_classification": "Delta processing for new/modified content only",
+          "label_output": {
+            "integration": "AvePoint sensitivity label application",
+            "m365_integration": "Microsoft Information Protection label sync"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "transformers",
+            "version": ">=4.35.0"
+          },
+          {
+            "name": "torch",
+            "version": ">=2.1.0"
+          },
+          {
+            "name": "presidio-analyzer",
+            "version": ">=2.2.0"
+          },
+          {
+            "name": "presidio-anonymizer",
+            "version": ">=2.2.0"
+          },
+          {
+            "name": "pypdf",
+            "version": ">=3.17.0"
+          },
+          {
+            "name": "python-docx",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "scikit-multilearn",
+            "version": ">=0.2.0"
+          },
+          {
+            "name": "mlflow",
+            "version": ">=2.8.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "Document sensitivity inventory with multi-label classifications and confidence scores",
+          "visualization": [
+            "Sensitivity heatmap by location",
+            "Classification coverage dashboard",
+            "Label distribution charts"
+          ],
+          "policy_automation": {
+            "auto_label": "Apply label if confidence > 0.9 for single-label documents",
+            "suggest_label": "Surface for review if confidence 0.7-0.9 or multi-label",
+            "dlp_trigger": "Alert on highly confidential content in wrong location"
+          },
+          "roi_metrics": {
+            "primary": "Sensitive data discovered beyond manual labeling",
+            "target": "30-50% additional sensitive content identified",
+            "secondary": "Compliance gap closure rate"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-06",
+      "name": "Duplicate/Near-Duplicate Detection",
+      "specification": {
+        "model_architecture": {
+          "embedding_model": {
+            "primary": "sentence-transformers/all-MiniLM-L6-v2",
+            "justification": "Fast inference (14K sentences/sec on GPU), 384-dim embeddings, good quality for document similarity",
+            "alternative": "BAAI/bge-base-en-v1.5 for higher accuracy if latency permits"
+          },
+          "similarity_search": {
+            "algorithm": "FAISS IVF-PQ",
+            "index_type": "IVF4096,PQ32",
+            "nprobe": 64,
+            "justification": "Scales to millions of documents with sub-second query time"
+          },
+          "clustering": {
+            "algorithm": "Agglomerative Clustering",
+            "linkage": "average",
+            "distance_threshold": 0.15,
+            "justification": "Produces interpretable document families without specifying cluster count"
+          },
+          "threshold_calibration": {
+            "exact_duplicate": ">0.99 cosine similarity",
+            "near_duplicate": "0.85-0.99 cosine similarity",
+            "related": "0.70-0.85 cosine similarity"
+          }
+        },
+        "feature_engineering": {
+          "text_extraction": "Same as UC-05",
+          "normalization": [
+            "Lowercase",
+            "Remove extra whitespace",
+            "Normalize unicode",
+            "Remove headers/footers for Office docs"
+          ],
+          "embedding_strategy": {
+            "full_document": "Mean pooling of chunk embeddings for docs < 10 pages",
+            "chunked": "Top-3 most representative chunks via TF-IDF for large docs"
+          },
+          "hash_prefiltering": {
+            "exact_match": "MD5 hash for byte-identical files",
+            "simhash": "64-bit simhash for candidate pair reduction"
+          }
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "document_corpus",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "text_content",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_path",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_size_bytes",
+                  "type": "INT"
+                },
+                {
+                  "name": "created_date",
+                  "type": "TIMESTAMP"
+                }
+              ],
+              "cardinality": 500000
+            },
+            {
+              "name": "duplicate_families",
+              "columns": [
+                {
+                  "name": "family_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "doc_ids",
+                  "type": "ARRAY<STRING>"
+                },
+                {
+                  "name": "canonical_doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "duplicate_type",
+                  "type": "STRING"
+                }
+              ]
+            }
+          ],
+          "duplicate_injection": {
+            "exact": "10% of docs have byte-identical copy in different location",
+            "reformatted": "5% have same content with different formatting",
+            "edited": "3% have minor edits (<5% token difference)",
+            "summarized": "2% have significantly shortened versions"
+          }
+        },
+        "experiment_design": {
+          "embedding_comparison": [
+            "all-MiniLM-L6-v2",
+            "bge-base-en-v1.5",
+            "e5-base-v2"
+          ],
+          "threshold_tuning": "Grid search over similarity thresholds, optimize F1 for near-duplicate detection",
+          "scalability_benchmarks": [
+            "10K docs",
+            "100K docs",
+            "1M docs",
+            "5M docs"
+          ],
+          "precision_recall_tradeoff": "Optimize for precision (avoid false duplicate flags)"
+        },
+        "evaluation_metrics": {
+          "duplicate_detection": {
+            "precision": {
+              "target": 0.95
+            },
+            "recall": {
+              "target": 0.85
+            }
+          },
+          "clustering_quality": {
+            "adjusted_rand_index": {
+              "target": 0.8
+            },
+            "silhouette": {
+              "target": 0.6
+            }
+          },
+          "search_latency": {
+            "target": "<100ms for 1M doc index"
+          },
+          "storage_savings_validation": "Actual vs. projected GB savings"
+        },
+        "fabric_workload_structure": {
+          "embedding_pipeline": [
+            "Document ingestion",
+            "Text extraction",
+            "Embedding generation",
+            "Index update"
+          ],
+          "vector_storage": "Delta Lake table with vector column type (Fabric preview feature)",
+          "incremental_processing": "Embed new docs, query against existing index for matches",
+          "duplicate_families_output": "Materialized table with family groupings"
+        },
+        "python_packages": [
+          {
+            "name": "sentence-transformers",
+            "version": ">=2.2.0"
+          },
+          {
+            "name": "faiss-cpu",
+            "version": ">=1.7.4"
+          },
+          {
+            "name": "faiss-gpu",
+            "version": ">=1.7.4",
+            "optional": true
+          },
+          {
+            "name": "hdbscan",
+            "version": ">=0.8.33"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "textract",
+            "version": ">=1.6.5",
+            "purpose": "Document parsing"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "Duplicate family inventory with storage impact analysis",
+          "visualization": [
+            "Duplicate network graph (Sankey/network)",
+            "Storage savings projection chart",
+            "Duplicate density by site heatmap"
+          ],
+          "remediation_workflow": {
+            "delete": "Remove true duplicates (keep canonical)",
+            "archive": "Move older copies to archive tier",
+            "consolidate": "Merge document families, update links"
+          },
+          "roi_metrics": {
+            "primary": "Storage reclaimed (GB)",
+            "target": "15-25% of total storage",
+            "calculation": "GB_reclaimed \u00d7 $0.023/GB/month \u00d7 12 = annual savings"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-07",
+      "name": "ROT Content Scoring",
+      "specification": {
+        "model_architecture": {
+          "primary_algorithm": "CatBoost Classifier",
+          "justification": "Native categorical feature handling, robust to overfitting, excellent performance on tabular data with mixed types",
+          "rot_subclassification": {
+            "approach": "Hierarchical: First binary (ROT vs. not-ROT), then multi-class (R vs. O vs. T) for positives",
+            "definitions": {
+              "Redundant": "Duplicate or near-duplicate of another document",
+              "Obsolete": "Content no longer current or relevant (superseded, project closed)",
+              "Trivial": "Low-value content (drafts, temp files, auto-generated)"
+            }
+          },
+          "score_calibration": "Isotonic regression for probability calibration",
+          "explainability": "SHAP TreeExplainer for feature contribution per document"
+        },
+        "feature_engineering": {
+          "staleness_features": [
+            {
+              "name": "days_since_creation",
+              "type": "numeric"
+            },
+            {
+              "name": "days_since_last_modify",
+              "type": "numeric"
+            },
+            {
+              "name": "days_since_last_access",
+              "type": "numeric"
+            },
+            {
+              "name": "access_trend_90d",
+              "type": "numeric",
+              "description": "Slope of access frequency"
+            },
+            {
+              "name": "access_count_total",
+              "type": "numeric"
+            }
+          ],
+          "structural_features": [
+            {
+              "name": "is_draft",
+              "type": "boolean",
+              "detection": "Filename patterns, metadata flags"
+            },
+            {
+              "name": "version_count",
+              "type": "numeric"
+            },
+            {
+              "name": "is_superseded",
+              "type": "boolean",
+              "detection": "Newer version exists"
+            },
+            {
+              "name": "is_in_recycle_bin",
+              "type": "boolean"
+            },
+            {
+              "name": "file_extension",
+              "type": "categorical"
+            }
+          ],
+          "semantic_features": [
+            {
+              "name": "template_match_score",
+              "type": "numeric",
+              "description": "Similarity to known templates"
+            },
+            {
+              "name": "boilerplate_ratio",
+              "type": "numeric",
+              "description": "% of text matching common boilerplate"
+            },
+            {
+              "name": "content_length_tokens",
+              "type": "numeric"
+            },
+            {
+              "name": "unique_word_ratio",
+              "type": "numeric"
+            }
+          ],
+          "business_context": [
+            {
+              "name": "author_is_active",
+              "type": "boolean"
+            },
+            {
+              "name": "author_departed_days_ago",
+              "type": "numeric"
+            },
+            {
+              "name": "project_status",
+              "type": "categorical",
+              "values": [
+                "active",
+                "completed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            {
+              "name": "retention_schedule_match",
+              "type": "boolean",
+              "description": "Content matches a retention schedule"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "document_metadata",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_path",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_extension",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_size_bytes",
+                  "type": "INT"
+                },
+                {
+                  "name": "created_date",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "modified_date",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "last_access_date",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "author_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "version_count",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": 1000000
+            },
+            {
+              "name": "content_analysis",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "content_length_tokens",
+                  "type": "INT"
+                },
+                {
+                  "name": "template_match_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "boilerplate_ratio",
+                  "type": "FLOAT"
+                }
+              ]
+            },
+            {
+              "name": "rot_labels",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "is_rot",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "rot_type",
+                  "type": "STRING",
+                  "values": [
+                    "R",
+                    "O",
+                    "T",
+                    null
+                  ]
+                }
+              ]
+            }
+          ],
+          "labeling_criteria": {
+            "Redundant": "Has duplicate with older modified_date",
+            "Obsolete": "Project closed AND no access in 180 days AND author departed",
+            "Trivial": "Is draft AND no access in 90 days AND size < 10KB",
+            "Not ROT": "Accessed in last 90 days OR matches active retention schedule"
+          }
+        },
+        "experiment_design": {
+          "binary_vs_multiclass": "Compare binary (ROT/not) vs. multi-class (R/O/T/not) approaches",
+          "feature_ablation": "Systematically remove feature groups to assess contribution",
+          "threshold_sensitivity": "Analyze precision/recall tradeoff at different score thresholds",
+          "human_validation": "Sample 500 high-ROT-score documents for manual review, measure agreement"
+        },
+        "evaluation_metrics": {
+          "classification": {
+            "precision": {
+              "target": 0.9,
+              "rationale": "Critical for deletion use case"
+            },
+            "recall": {
+              "target": 0.7
+            },
+            "f1": {
+              "target": 0.8
+            }
+          },
+          "score_distribution": "Expect bimodal: clear ROT (>80) and clear not-ROT (<20)",
+          "storage_impact_correlation": {
+            "target": 0.8,
+            "description": "Score should correlate with actual storage consumption of ROT content"
+          },
+          "false_positive_cost": "Manual estimate of cost per incorrectly deleted valuable document"
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_file_metadata",
+              "raw_access_logs"
+            ],
+            "silver": [
+              "enriched_document_features",
+              "content_analysis_features"
+            ],
+            "gold": [
+              "rot_scores",
+              "cleanup_recommendations",
+              "cleanup_campaign_tracking"
+            ]
+          },
+          "scoring_pipeline": "Weekly batch scoring of all documents",
+          "cleanup_integration": "Export to AvePoint lifecycle management for automated/approved deletion"
+        },
+        "python_packages": [
+          {
+            "name": "catboost",
+            "version": ">=1.2.0"
+          },
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "lightgbm",
+            "version": ">=4.1.0"
+          },
+          {
+            "name": "shap",
+            "version": ">=0.43.0"
+          },
+          {
+            "name": "lime",
+            "version": ">=0.2.0"
+          },
+          {
+            "name": "spacy",
+            "version": ">=3.7.0",
+            "purpose": "Text analysis for semantic features"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "Document ROT score (0-100) with ROT type classification and cleanup recommendations",
+          "visualization": [
+            "ROT distribution by site/department",
+            "Potential savings waterfall chart",
+            "ROT trend over time"
+          ],
+          "cleanup_workflow": {
+            "automated": "Delete if score > 95 AND no access in 365 days AND in approved category",
+            "review_required": "Surface for review if score 70-95",
+            "retain": "No action if score < 70"
+          },
+          "roi_metrics": {
+            "primary": "Storage reclaimed (GB/TB)",
+            "target": "20-30% of analyzed content",
+            "secondary": "Compliance risk reduced (over-retention)",
+            "calculation": "Storage_saved \u00d7 storage_cost + compliance_risk_reduction"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-08",
+      "name": "Document Summarization & Auto-Tagging",
+      "specification": {
+        "model_architecture": {
+          "llm_selection": {
+            "primary": "Azure OpenAI GPT-4o-mini",
+            "justification": "Cost-effective for high-volume summarization, strong instruction following",
+            "alternative": "GPT-4o for complex documents requiring deeper understanding"
+          },
+          "summarization_approach": {
+            "short_summary": "1-3 sentences for search snippets (max 100 tokens)",
+            "detailed_summary": "1 paragraph for document previews (max 300 tokens)",
+            "method": "Abstractive with extractive fallback for very long documents"
+          },
+          "constrained_tagging": {
+            "method": "Prompt with taxonomy enumeration + JSON output format",
+            "max_tags": 5,
+            "confidence_threshold": 0.7
+          },
+          "rag_architecture": {
+            "purpose": "Ground summaries in document content to reduce hallucination",
+            "retriever": "Document chunks indexed with embeddings",
+            "chunk_size": 1000,
+            "top_k": 5
+          }
+        },
+        "feature_engineering": {
+          "document_chunking": {
+            "method": "Recursive character splitter with overlap",
+            "chunk_size": 1000,
+            "overlap": 200,
+            "separators": [
+              "\n\n",
+              "\n",
+              ". ",
+              " "
+            ]
+          },
+          "metadata_injection": {
+            "included": [
+              "file_name",
+              "file_type",
+              "existing_tags",
+              "author_department"
+            ],
+            "prompt_format": "Context about this document: {metadata}"
+          },
+          "taxonomy_embedding": {
+            "purpose": "Embed taxonomy terms for semantic similarity matching",
+            "model": "all-MiniLM-L6-v2",
+            "usage": "Find semantically similar tags for ambiguous content"
+          },
+          "prompt_templates": {
+            "summarization": "Summarize the following document in {length} for a {purpose}. Focus on key points and conclusions.\n\nDocument:\n{content}\n\nSummary:",
+            "tagging": "Based on the following document, select up to 5 relevant tags from this taxonomy: {taxonomy}\n\nDocument:\n{content}\n\nReturn your response as JSON: {\"tags\": [{\"name\": \"tag_name\", \"confidence\": 0.0-1.0}]}"
+          }
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "document_corpus",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "text_content",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "existing_tags",
+                  "type": "ARRAY<STRING>"
+                }
+              ],
+              "cardinality": 10000
+            },
+            {
+              "name": "human_summaries",
+              "columns": [
+                {
+                  "name": "doc_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "short_summary",
+                  "type": "STRING"
+                },
+                {
+                  "name": "detailed_summary",
+                  "type": "STRING"
+                },
+                {
+                  "name": "annotator_id",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 1000,
+              "note": "Subset with human-written ground truth"
+            },
+            {
+              "name": "taxonomy",
+              "columns": [
+                {
+                  "name": "tag_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tag_name",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tag_hierarchy",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tag_description",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 500
+            }
+          ],
+          "quality_rubric": {
+            "summary": [
+              "Accuracy (1-5)",
+              "Completeness (1-5)",
+              "Conciseness (1-5)",
+              "Fluency (1-5)"
+            ],
+            "tagging": [
+              "Relevance (1-5)",
+              "Coverage (1-5)",
+              "Specificity (1-5)"
+            ]
+          }
+        },
+        "experiment_design": {
+          "model_comparison": [
+            "gpt-4o-mini",
+            "gpt-4o",
+            "claude-3-haiku",
+            "llama-3.1-8b"
+          ],
+          "prompt_variations": [
+            "Zero-shot",
+            "Few-shot (3 examples)",
+            "Chain-of-thought"
+          ],
+          "rag_configuration": [
+            "No RAG",
+            "RAG top-3",
+            "RAG top-5",
+            "RAG top-10"
+          ],
+          "cost_quality_tradeoff": "Plot cost per document vs. quality score to find optimal operating point"
+        },
+        "evaluation_metrics": {
+          "summarization": {
+            "rouge_1": {
+              "target": 0.45
+            },
+            "rouge_l": {
+              "target": 0.4
+            },
+            "bertscore": {
+              "target": 0.85
+            },
+            "human_eval": {
+              "target": 4.0,
+              "scale": "1-5"
+            }
+          },
+          "tagging": {
+            "precision": {
+              "target": 0.8
+            },
+            "recall": {
+              "target": 0.7
+            },
+            "taxonomy_adherence": {
+              "target": 1.0,
+              "description": "All suggested tags in taxonomy"
+            }
+          },
+          "hallucination_rate": {
+            "target": "<5%",
+            "measurement": "Manual review of sampled outputs"
+          },
+          "latency": {
+            "target": "<10s per document"
+          },
+          "cost": {
+            "target": "<$0.01 per document"
+          }
+        },
+        "fabric_workload_structure": {
+          "document_queue": {
+            "source": "New/modified documents from AvePoint content crawl",
+            "priority": "Untagged documents first, then stale summaries"
+          },
+          "llm_inference": {
+            "service": "Azure OpenAI",
+            "rate_limiting": "1000 RPM, 100K TPM",
+            "retry_strategy": "Exponential backoff with jitter"
+          },
+          "output_storage": {
+            "summaries_table": "gold.document_summaries",
+            "tags_table": "gold.document_tags_suggested"
+          },
+          "processing_mode": {
+            "batch": "Nightly processing of document queue",
+            "on_demand": "Real-time summarization via API endpoint"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "openai",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "langchain",
+            "version": ">=0.1.0"
+          },
+          {
+            "name": "llama-index",
+            "version": ">=0.9.0",
+            "optional": true
+          },
+          {
+            "name": "rouge-score",
+            "version": ">=0.1.2"
+          },
+          {
+            "name": "bert-score",
+            "version": ">=0.3.13"
+          },
+          {
+            "name": "chromadb",
+            "version": ">=0.4.0",
+            "purpose": "Vector store for RAG"
+          },
+          {
+            "name": "tiktoken",
+            "version": ">=0.5.0",
+            "purpose": "Token counting"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": "Summary table (short + detailed) and tag suggestions with confidence scores",
+          "visualization": [
+            "Tag coverage dashboard (% documents tagged)",
+            "Processing status and queue depth",
+            "Quality metrics trend"
+          ],
+          "governance_integration": {
+            "auto_apply": "Apply tags if confidence > 0.9 AND single clear match",
+            "suggest": "Surface suggestions in AvePoint UI for user approval",
+            "search_enhancement": "Index summaries for improved search relevance"
+          },
+          "roi_metrics": {
+            "primary": "Time saved on manual tagging",
+            "calculation": "Documents_tagged \u00d7 minutes_per_manual_tag \u00d7 hourly_rate",
+            "secondary": "Search relevance improvement (click-through rate)"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-09",
+      "name": "Adoption Health Scoring",
+      "specification": {
+        "model_architecture": {
+          "regression_model": {
+            "algorithm": "XGBoost Regressor for renewal probability",
+            "alternative": "Cox Proportional Hazards for time-to-churn",
+            "target": "renewal_probability (0-1)"
+          },
+          "clustering_model": {
+            "algorithm": "K-Means with k=6 (determined by elbow method)",
+            "purpose": "Identify usage archetypes for segmentation",
+            "cluster_names": [
+              "Power Users",
+              "Steady Users",
+              "Declining",
+              "New/Ramping",
+              "Low Engagement",
+              "At Risk"
+            ]
+          },
+          "score_composition": {
+            "formula": "Health_Score = 0.6 \u00d7 renewal_prob \u00d7 100 + 0.4 \u00d7 cluster_health_weight",
+            "cluster_weights": {
+              "Power Users": 100,
+              "Steady Users": 85,
+              "New/Ramping": 70,
+              "Low Engagement": 40,
+              "Declining": 30,
+              "At Risk": 15
+            }
+          },
+          "interpretability": "SHAP values for feature contribution to score, cluster profile descriptions for CSM consumption"
+        },
+        "feature_engineering": {
+          "usage_intensity": [
+            {
+              "name": "dau",
+              "description": "Daily active users in account"
+            },
+            {
+              "name": "wau",
+              "description": "Weekly active users"
+            },
+            {
+              "name": "mau",
+              "description": "Monthly active users"
+            },
+            {
+              "name": "dau_mau_ratio",
+              "formula": "DAU/MAU",
+              "description": "Engagement stickiness"
+            },
+            {
+              "name": "avg_session_duration_min",
+              "description": "Average session length"
+            },
+            {
+              "name": "total_actions_30d",
+              "description": "Total platform actions in 30 days"
+            }
+          ],
+          "feature_breadth": [
+            {
+              "name": "features_used_count",
+              "description": "Count of distinct features used"
+            },
+            {
+              "name": "features_licensed_count",
+              "description": "Count of features in license"
+            },
+            {
+              "name": "feature_utilization_ratio",
+              "formula": "features_used / features_licensed"
+            },
+            {
+              "name": "advanced_features_used",
+              "description": "Count of advanced/premium features used"
+            }
+          ],
+          "trend_features": [
+            {
+              "name": "usage_velocity_30d",
+              "formula": "usage_this_month / usage_last_month"
+            },
+            {
+              "name": "usage_acceleration",
+              "formula": "velocity_this_month - velocity_last_month"
+            },
+            {
+              "name": "trend_direction",
+              "values": [
+                "growing",
+                "stable",
+                "declining"
+              ]
+            },
+            {
+              "name": "consecutive_decline_weeks",
+              "description": "Weeks of continuous usage decline"
+            }
+          ],
+          "engagement_features": [
+            {
+              "name": "config_completeness_score",
+              "description": "% of recommended configurations completed"
+            },
+            {
+              "name": "support_tickets_30d",
+              "description": "Support tickets opened"
+            },
+            {
+              "name": "support_sentiment",
+              "description": "Average sentiment of support interactions"
+            },
+            {
+              "name": "training_completion_rate",
+              "description": "% of available training completed"
+            },
+            {
+              "name": "nps_score",
+              "description": "Most recent NPS survey response"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "account_usage_metrics",
+              "columns": [
+                {
+                  "name": "account_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "metric_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "dau",
+                  "type": "INT"
+                },
+                {
+                  "name": "wau",
+                  "type": "INT"
+                },
+                {
+                  "name": "mau",
+                  "type": "INT"
+                },
+                {
+                  "name": "total_actions",
+                  "type": "INT"
+                },
+                {
+                  "name": "features_used",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": "1000 accounts \u00d7 365 days"
+            },
+            {
+              "name": "account_attributes",
+              "columns": [
+                {
+                  "name": "account_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "contract_start_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "contract_end_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "arr",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "licensed_users",
+                  "type": "INT"
+                },
+                {
+                  "name": "industry",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 1000
+            },
+            {
+              "name": "renewal_outcomes",
+              "columns": [
+                {
+                  "name": "account_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "renewal_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "did_renew",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "churn_reason",
+                  "type": "STRING"
+                }
+              ]
+            }
+          ],
+          "churn_reason_taxonomy": [
+            "Price",
+            "Competitor",
+            "No longer needed",
+            "Poor support",
+            "Missing features",
+            "M&A",
+            "Unknown"
+          ]
+        },
+        "experiment_design": {
+          "survival_vs_classification": "Compare Cox PH model vs. binary classification for churn prediction",
+          "feature_importance": "SHAP analysis to identify top predictive features",
+          "cluster_stability": "Bootstrap clustering 100 times, measure cluster assignment consistency",
+          "score_calibration": "Validate score distribution against actual renewal rates by decile"
+        },
+        "evaluation_metrics": {
+          "churn_prediction": {
+            "auc_roc": {
+              "target": 0.8
+            },
+            "precision_at_10": {
+              "target": 0.7,
+              "description": "Precision when flagging top 10% as at-risk"
+            },
+            "lift_at_10": {
+              "target": 3.0,
+              "description": "3x better than random at identifying churners"
+            }
+          },
+          "score_outcome_correlation": {
+            "target": 0.65,
+            "description": "Correlation between health score and renewal"
+          },
+          "cluster_interpretability": "Business stakeholders can name and describe each cluster",
+          "csm_adoption": "% of CSMs using health scores in account planning"
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_usage_telemetry",
+              "raw_support_tickets",
+              "raw_survey_responses"
+            ],
+            "silver": [
+              "account_usage_aggregates",
+              "account_features",
+              "engagement_metrics"
+            ],
+            "gold": [
+              "account_health_scores",
+              "account_segments",
+              "score_history",
+              "csm_action_queue"
+            ]
+          },
+          "scoring_pipeline": {
+            "frequency": "Daily for usage metrics, weekly for full score recalculation",
+            "output": "Score, segment, top risk factors, recommended actions"
+          },
+          "crm_integration": {
+            "target": "Salesforce",
+            "method": "Daily sync via Salesforce API or MuleSoft",
+            "fields": [
+              "Health_Score__c",
+              "Health_Segment__c",
+              "Risk_Factors__c"
+            ]
+          }
+        },
+        "python_packages": [
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "lifelines",
+            "version": ">=0.27.0",
+            "purpose": "Survival analysis"
+          },
+          {
+            "name": "scikit-survival",
+            "version": ">=0.22.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0",
+            "purpose": "Clustering, preprocessing"
+          },
+          {
+            "name": "shap",
+            "version": ">=0.43.0"
+          },
+          {
+            "name": "simple-salesforce",
+            "version": ">=1.12.0",
+            "purpose": "CRM integration"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Account Health Score (0-100)",
+            "secondary": "Segment assignment with description",
+            "tertiary": "Recommended CSM actions"
+          },
+          "visualization": [
+            "Health score distribution histogram",
+            "At-risk accounts list with ARR impact",
+            "Segment breakdown pie chart",
+            "Health trend line per account"
+          ],
+          "csm_workflow": {
+            "alerts": "Immediate notification when account drops below 50",
+            "playbooks": "Segment-specific engagement playbooks",
+            "prioritization": "Daily prioritized account list"
+          },
+          "roi_metrics": {
+            "primary": "Churn reduction",
+            "target": "5-15% improvement in renewal rate",
+            "calculation": "Retained_ARR \u00d7 churn_reduction_% = revenue_saved"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-10",
+      "name": "Shadow IT / Unapproved App Detection",
+      "specification": {
+        "model_architecture": {
+          "anomaly_detection": {
+            "algorithm": "Isolation Forest",
+            "purpose": "Detect unusual OAuth consent patterns per user/department",
+            "features": "Consent frequency, permission scope breadth, app category diversity"
+          },
+          "app_risk_classification": {
+            "algorithm": "Random Forest Classifier",
+            "risk_tiers": [
+              "Critical",
+              "High",
+              "Medium",
+              "Low",
+              "Approved"
+            ],
+            "features": "Permission scopes, publisher reputation, usage patterns, app category"
+          },
+          "redundancy_clustering": {
+            "algorithm": "DBSCAN on app functionality embeddings",
+            "purpose": "Identify apps serving similar functions (consolidation candidates)"
+          },
+          "ensemble_risk": "Final_Risk = max(anomaly_flag \u00d7 1.5, classification_risk) adjusted by usage"
+        },
+        "feature_engineering": {
+          "consent_features": [
+            {
+              "name": "consenting_user_role",
+              "type": "categorical"
+            },
+            {
+              "name": "consenting_user_department",
+              "type": "categorical"
+            },
+            {
+              "name": "consent_timestamp",
+              "type": "datetime"
+            },
+            {
+              "name": "is_first_consent_for_app",
+              "type": "boolean"
+            },
+            {
+              "name": "consents_same_day_count",
+              "type": "numeric"
+            }
+          ],
+          "app_features": [
+            {
+              "name": "permission_scopes",
+              "type": "array",
+              "encoding": "Multi-hot"
+            },
+            {
+              "name": "permission_scope_risk_score",
+              "type": "numeric",
+              "calculation": "Sum of scope risk weights"
+            },
+            {
+              "name": "publisher_verified",
+              "type": "boolean"
+            },
+            {
+              "name": "publisher_reputation_score",
+              "type": "numeric"
+            },
+            {
+              "name": "app_category",
+              "type": "categorical"
+            },
+            {
+              "name": "app_age_days",
+              "type": "numeric"
+            }
+          ],
+          "behavioral_features": [
+            {
+              "name": "usage_frequency_post_consent",
+              "type": "numeric"
+            },
+            {
+              "name": "data_volume_accessed",
+              "type": "numeric"
+            },
+            {
+              "name": "users_with_consent_count",
+              "type": "numeric"
+            },
+            {
+              "name": "usage_recency_days",
+              "type": "numeric"
+            }
+          ],
+          "peer_comparison": [
+            {
+              "name": "pct_dept_with_app",
+              "type": "numeric"
+            },
+            {
+              "name": "pct_role_with_app",
+              "type": "numeric"
+            },
+            {
+              "name": "is_department_outlier",
+              "type": "boolean"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "oauth_consent_events",
+              "columns": [
+                {
+                  "name": "consent_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "app_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "consent_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "permission_scopes",
+                  "type": "ARRAY<STRING>"
+                }
+              ],
+              "cardinality": 50000
+            },
+            {
+              "name": "app_metadata",
+              "columns": [
+                {
+                  "name": "app_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "app_name",
+                  "type": "STRING"
+                },
+                {
+                  "name": "publisher",
+                  "type": "STRING"
+                },
+                {
+                  "name": "publisher_verified",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "app_category",
+                  "type": "STRING"
+                },
+                {
+                  "name": "permission_scopes",
+                  "type": "ARRAY<STRING>"
+                }
+              ],
+              "cardinality": 2000
+            },
+            {
+              "name": "app_usage_telemetry",
+              "columns": [
+                {
+                  "name": "usage_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "app_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "usage_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "action_type",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 500000
+            },
+            {
+              "name": "app_risk_labels",
+              "columns": [
+                {
+                  "name": "app_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "risk_tier",
+                  "type": "STRING"
+                },
+                {
+                  "name": "labeled_by",
+                  "type": "STRING"
+                },
+                {
+                  "name": "label_date",
+                  "type": "DATE"
+                }
+              ],
+              "note": "Partial labels from security team reviews"
+            }
+          ]
+        },
+        "experiment_design": {
+          "anomaly_threshold_tuning": "Optimize for 1-5% anomaly rate based on SOC capacity",
+          "risk_classification": "Train on labeled apps, evaluate on held-out security team decisions",
+          "clustering_validation": "Security team reviews cluster assignments for consolidation candidates",
+          "publisher_reputation": "Integrate with Microsoft Defender TI or similar for reputation scores"
+        },
+        "evaluation_metrics": {
+          "anomaly_detection": {
+            "precision": {
+              "target": 0.6,
+              "description": "60% of flagged consents warrant investigation"
+            },
+            "recall": {
+              "target": 0.85,
+              "description": "Catch 85% of truly risky consents"
+            }
+          },
+          "risk_classification": {
+            "accuracy": {
+              "target": 0.8
+            },
+            "critical_recall": {
+              "target": 0.95
+            }
+          },
+          "redundancy_detection": {
+            "cluster_purity": {
+              "target": 0.75
+            },
+            "consolidation_candidates_identified": {
+              "target": "20-40% of apps"
+            }
+          }
+        },
+        "fabric_workload_structure": {
+          "ingestion": {
+            "source": "Microsoft Graph API for OAuth app consents",
+            "frequency": "Hourly for new consents, daily for full sync"
+          },
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_oauth_consents",
+              "raw_app_metadata"
+            ],
+            "silver": [
+              "enriched_apps",
+              "consent_features",
+              "usage_aggregates"
+            ],
+            "gold": [
+              "app_risk_inventory",
+              "consent_anomalies",
+              "redundancy_clusters"
+            ]
+          },
+          "policy_automation": {
+            "block": "Auto-block apps with Critical risk if policy enabled",
+            "require_approval": "Route High risk apps to security team queue",
+            "notify": "Alert admins on new Medium risk app consents"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "pyod",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "hdbscan",
+            "version": ">=0.8.33"
+          },
+          {
+            "name": "networkx",
+            "version": ">=3.2.0",
+            "purpose": "App-user relationship analysis"
+          },
+          {
+            "name": "msgraph-sdk",
+            "version": ">=1.0.0",
+            "purpose": "Microsoft Graph API"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "App risk inventory with tier assignments",
+            "secondary": "Anomalous consent alerts",
+            "tertiary": "Redundancy/consolidation recommendations"
+          },
+          "visualization": [
+            "Shadow IT dashboard with app inventory",
+            "Risk tier distribution chart",
+            "App redundancy map (network graph)",
+            "Consent trend over time"
+          ],
+          "governance_workflow": {
+            "block": "One-click block for risky apps",
+            "approve": "Add to approved app list",
+            "review": "Assign to security team for investigation"
+          },
+          "roi_metrics": {
+            "primary": "Risky apps blocked/removed",
+            "secondary": "Review time saved (60-70% reduction)",
+            "tertiary": "License consolidation savings from redundancy detection"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-11",
+      "name": "Data Exfiltration Risk Model",
+      "specification": {
+        "model_architecture": {
+          "unsupervised_component": {
+            "algorithm": "LSTM Autoencoder for sequence anomaly detection",
+            "input": "Daily user activity vectors over 30-day sliding window",
+            "output": "Reconstruction error as anomaly score"
+          },
+          "supervised_component": {
+            "algorithm": "XGBoost Classifier",
+            "training": "Known exfiltration indicators from security incidents",
+            "features": "Aggregated behavioral patterns matching threat actor TTPs"
+          },
+          "ensemble_strategy": {
+            "formula": "Risk_Score = 0.5 \u00d7 normalized_anomaly_score + 0.5 \u00d7 exfiltration_probability",
+            "calibration": "Isotonic regression on validation set"
+          },
+          "temporal_modeling": {
+            "sequence_length": 30,
+            "features_per_day": 20,
+            "architecture": "LSTM(64) \u2192 LSTM(32) \u2192 Dense(20) \u2192 LSTM(32) \u2192 LSTM(64)"
+          }
+        },
+        "feature_engineering": {
+          "volume_features": [
+            {
+              "name": "download_count_daily",
+              "type": "numeric"
+            },
+            {
+              "name": "download_volume_mb_daily",
+              "type": "numeric"
+            },
+            {
+              "name": "external_share_count_daily",
+              "type": "numeric"
+            },
+            {
+              "name": "email_attachment_volume_mb_daily",
+              "type": "numeric"
+            },
+            {
+              "name": "usb_copy_events_daily",
+              "type": "numeric",
+              "if_available": true
+            }
+          ],
+          "pattern_features": [
+            {
+              "name": "off_hours_activity_ratio",
+              "type": "numeric"
+            },
+            {
+              "name": "weekend_activity_flag",
+              "type": "boolean"
+            },
+            {
+              "name": "bulk_operation_flag",
+              "type": "boolean",
+              "threshold": ">100 files in 1 hour"
+            },
+            {
+              "name": "first_time_access_count",
+              "type": "numeric"
+            },
+            {
+              "name": "access_velocity_percentile",
+              "type": "numeric"
+            }
+          ],
+          "breadth_features": [
+            {
+              "name": "unique_sites_accessed_daily",
+              "type": "numeric"
+            },
+            {
+              "name": "cross_department_access_count",
+              "type": "numeric"
+            },
+            {
+              "name": "sensitive_content_access_count",
+              "type": "numeric"
+            },
+            {
+              "name": "new_location_access_flag",
+              "type": "boolean"
+            }
+          ],
+          "trend_features": [
+            {
+              "name": "download_volume_wow_change",
+              "type": "numeric"
+            },
+            {
+              "name": "activity_level_zscore_30d",
+              "type": "numeric"
+            },
+            {
+              "name": "rolling_anomaly_score_7d",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "user_activity_daily",
+              "columns": [
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "activity_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "download_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "download_volume_mb",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "external_share_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "email_attachment_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "unique_sites_accessed",
+                  "type": "INT"
+                },
+                {
+                  "name": "off_hours_actions",
+                  "type": "INT"
+                },
+                {
+                  "name": "total_actions",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": "10000 users \u00d7 365 days"
+            },
+            {
+              "name": "exfiltration_scenarios",
+              "columns": [
+                {
+                  "name": "scenario_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "scenario_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "start_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "end_date",
+                  "type": "DATE"
+                }
+              ],
+              "scenario_types": [
+                "departing_employee_data_theft",
+                "compromised_account_bulk_download",
+                "insider_slow_exfiltration",
+                "accidental_mass_share"
+              ]
+            }
+          ],
+          "injection_strategy": {
+            "departing_employee": "30 days before departure: 5x normal download volume, increasing external shares",
+            "compromised_account": "Sudden spike in off-hours access, bulk downloads, new locations",
+            "slow_exfiltration": "Gradual 10% increase in data movement over 90 days",
+            "accidental": "One-time mass external share event"
+          }
+        },
+        "experiment_design": {
+          "anomaly_method_comparison": [
+            "LSTM Autoencoder",
+            "Isolation Forest",
+            "One-Class SVM",
+            "Prophet for time-series"
+          ],
+          "supervised_training": "Train on labeled incidents, augment with synthetic scenarios",
+          "ensemble_weight_optimization": "Grid search on validation set for optimal component weights",
+          "false_positive_tuning": "Tune threshold to achieve target 5-10 alerts per day for SOC capacity"
+        },
+        "evaluation_metrics": {
+          "detection_rate": {
+            "target": 0.9,
+            "description": "Catch 90% of injected exfiltration scenarios"
+          },
+          "false_positive_rate": {
+            "target": "<0.1%",
+            "description": "Less than 1 in 1000 normal users flagged daily"
+          },
+          "time_to_detect": {
+            "target": "<48 hours",
+            "description": "Alert within 48 hours of exfiltration behavior start"
+          },
+          "soc_feedback": "Incorporate analyst disposition as training signal"
+        },
+        "fabric_workload_structure": {
+          "activity_ingestion": {
+            "source": "AvePoint unified activity logs",
+            "latency": "Near-real-time (15-minute batches)",
+            "retention": "90 days in silver, 1 year in bronze"
+          },
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_activity_events"
+            ],
+            "silver": [
+              "user_activity_daily",
+              "user_baseline_profiles"
+            ],
+            "gold": [
+              "user_risk_scores",
+              "exfiltration_alerts",
+              "investigation_packages"
+            ]
+          },
+          "scoring_pipeline": {
+            "frequency": "Every 4 hours",
+            "output": "Updated risk scores and new alerts"
+          },
+          "siem_integration": {
+            "format": "CEF syslog for Sentinel/Splunk",
+            "fields": [
+              "risk_score",
+              "anomaly_type",
+              "top_indicators",
+              "user_context"
+            ]
+          }
+        },
+        "python_packages": [
+          {
+            "name": "tensorflow",
+            "version": ">=2.14.0",
+            "purpose": "LSTM Autoencoder"
+          },
+          {
+            "name": "pytorch",
+            "version": ">=2.1.0",
+            "alternative": true
+          },
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "pyod",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "tsfresh",
+            "version": ">=0.20.0",
+            "purpose": "Time-series feature extraction"
+          },
+          {
+            "name": "prophet",
+            "version": ">=1.1.0",
+            "purpose": "Time-series baseline modeling"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "User exfiltration risk score (0-100)",
+            "secondary": "Prioritized alert queue",
+            "tertiary": "Investigation package (timeline, evidence, context)"
+          },
+          "visualization": [
+            "User risk trend dashboard",
+            "Behavioral deviation charts (actual vs. baseline)",
+            "Department risk heatmap",
+            "Alert volume and disposition tracking"
+          ],
+          "soc_workflow": {
+            "alert_creation": "Automatic case creation in SIEM/SOAR",
+            "investigation_support": "Pre-compiled evidence package",
+            "feedback_loop": "Analyst disposition feeds back to model"
+          },
+          "roi_metrics": {
+            "primary": "Insider threats detected",
+            "secondary": "Mean-time-to-detect improvement",
+            "tertiary": "Investigation time saved per incident"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-12",
+      "name": "User Segmentation for Enablement",
+      "specification": {
+        "model_architecture": {
+          "clustering_algorithm": {
+            "primary": "K-Means",
+            "k_determination": "Elbow method + silhouette score, expect k=5-8",
+            "alternative": "Gaussian Mixture Model for soft assignments"
+          },
+          "dimensionality_reduction": {
+            "method": "UMAP",
+            "n_components": 2,
+            "purpose": "Visualization and noise reduction"
+          },
+          "segment_stability": {
+            "method": "Bootstrap clustering (100 iterations)",
+            "metric": "Adjusted Rand Index stability > 0.80"
+          }
+        },
+        "feature_engineering": {
+          "usage_intensity": [
+            {
+              "name": "login_frequency_weekly",
+              "type": "numeric"
+            },
+            {
+              "name": "session_duration_avg_min",
+              "type": "numeric"
+            },
+            {
+              "name": "actions_per_session_avg",
+              "type": "numeric"
+            },
+            {
+              "name": "days_active_per_month",
+              "type": "numeric"
+            }
+          ],
+          "feature_sophistication": [
+            {
+              "name": "advanced_features_used_count",
+              "type": "numeric"
+            },
+            {
+              "name": "api_usage_flag",
+              "type": "boolean"
+            },
+            {
+              "name": "automation_features_used",
+              "type": "boolean"
+            },
+            {
+              "name": "admin_features_used",
+              "type": "boolean"
+            },
+            {
+              "name": "configuration_depth_score",
+              "type": "numeric"
+            }
+          ],
+          "collaboration_features": [
+            {
+              "name": "sharing_frequency_weekly",
+              "type": "numeric"
+            },
+            {
+              "name": "co_authoring_sessions_monthly",
+              "type": "numeric"
+            },
+            {
+              "name": "teams_messages_sent_weekly",
+              "type": "numeric"
+            },
+            {
+              "name": "external_collaboration_ratio",
+              "type": "numeric"
+            }
+          ],
+          "learning_features": [
+            {
+              "name": "new_feature_adoption_rate",
+              "type": "numeric"
+            },
+            {
+              "name": "help_access_frequency",
+              "type": "numeric"
+            },
+            {
+              "name": "training_modules_completed",
+              "type": "numeric"
+            },
+            {
+              "name": "feature_exploration_breadth",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "user_usage_summary",
+              "columns": [
+                {
+                  "name": "user_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "summary_month",
+                  "type": "DATE"
+                },
+                {
+                  "name": "login_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "total_actions",
+                  "type": "INT"
+                },
+                {
+                  "name": "features_used",
+                  "type": "ARRAY<STRING>"
+                },
+                {
+                  "name": "session_minutes_total",
+                  "type": "INT"
+                },
+                {
+                  "name": "shares_created",
+                  "type": "INT"
+                },
+                {
+                  "name": "help_views",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": "15000 users \u00d7 12 months"
+            }
+          ],
+          "expected_archetypes": [
+            {
+              "name": "Power Users",
+              "characteristics": "High usage, advanced features, trainers for others"
+            },
+            {
+              "name": "Document-Centric",
+              "characteristics": "Heavy file/document usage, less collaboration features"
+            },
+            {
+              "name": "Collaborators",
+              "characteristics": "High sharing, co-authoring, Teams integration"
+            },
+            {
+              "name": "Administrators",
+              "characteristics": "Config and admin features, lower content creation"
+            },
+            {
+              "name": "Light Users",
+              "characteristics": "Basic features only, low frequency"
+            },
+            {
+              "name": "New/Exploring",
+              "characteristics": "Recent start, high help access, growing usage"
+            }
+          ]
+        },
+        "experiment_design": {
+          "algorithm_comparison": [
+            "K-Means",
+            "GMM",
+            "DBSCAN",
+            "Hierarchical"
+          ],
+          "feature_selection": "Recursive feature elimination to identify most discriminative features",
+          "cluster_count": "Test k=4 through k=10, select based on silhouette + interpretability",
+          "temporal_stability": "Re-cluster monthly, measure segment migration patterns"
+        },
+        "evaluation_metrics": {
+          "cluster_quality": {
+            "silhouette": {
+              "target": 0.4
+            },
+            "davies_bouldin": {
+              "target": "<1.0"
+            },
+            "calinski_harabasz": {
+              "target": ">500"
+            }
+          },
+          "interpretability": "Business stakeholders can name and describe segments without prompting",
+          "actionability": "Each segment has distinct enablement implications",
+          "stability": "ARI > 0.80 across monthly re-clustering"
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_user_activity"
+            ],
+            "silver": [
+              "user_usage_aggregates",
+              "user_feature_matrix"
+            ],
+            "gold": [
+              "user_segments",
+              "segment_profiles",
+              "segment_history"
+            ]
+          },
+          "clustering_pipeline": {
+            "frequency": "Monthly re-clustering",
+            "output": "Segment assignments, profile updates"
+          },
+          "segment_profiles_output": {
+            "format": "JSON profile per segment with characteristics, size, recommended actions"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "umap-learn",
+            "version": ">=0.5.4"
+          },
+          {
+            "name": "hdbscan",
+            "version": ">=0.8.33"
+          },
+          {
+            "name": "plotly",
+            "version": ">=5.18.0",
+            "purpose": "Interactive segment visualization"
+          },
+          {
+            "name": "seaborn",
+            "version": ">=0.13.0"
+          },
+          {
+            "name": "yellowbrick",
+            "version": ">=1.5.0",
+            "purpose": "Cluster visualization"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "User segment assignments",
+            "secondary": "Segment profiles with characteristics",
+            "tertiary": "Segment-specific enablement playbooks"
+          },
+          "visualization": [
+            "Segment scatter plot (UMAP 2D)",
+            "Radar chart per segment showing feature profiles",
+            "Segment size distribution pie chart",
+            "Segment migration Sankey diagram"
+          ],
+          "enablement_integration": {
+            "targeted_campaigns": "Trigger enablement emails by segment",
+            "champion_identification": "Power Users as training candidates",
+            "at_risk_support": "Light Users targeted for adoption support"
+          },
+          "roi_metrics": {
+            "primary": "Training engagement lift by segment targeting",
+            "secondary": "Feature adoption improvement post-enablement",
+            "tertiary": "Reduced support tickets through proactive enablement"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-13",
+      "name": "Policy Compliance Prediction",
+      "specification": {
+        "model_architecture": {
+          "binary_classification": {
+            "algorithm": "LightGBM Classifier",
+            "target": "will_violate_in_30_days (boolean)",
+            "purpose": "Flag policy-scope pairs likely to become non-compliant"
+          },
+          "survival_analysis": {
+            "algorithm": "Random Survival Forest",
+            "target": "time_to_violation (days)",
+            "purpose": "Estimate when compliance will degrade"
+          },
+          "multi_policy_approach": "Single model with policy_type as feature vs. separate models per policy type\u2014test both",
+          "probability_calibration": "Platt scaling for well-calibrated probabilities"
+        },
+        "feature_engineering": {
+          "historical_compliance": [
+            {
+              "name": "past_violation_count",
+              "type": "numeric"
+            },
+            {
+              "name": "days_since_last_violation",
+              "type": "numeric"
+            },
+            {
+              "name": "compliance_rate_90d",
+              "type": "numeric"
+            },
+            {
+              "name": "violation_severity_history",
+              "type": "categorical"
+            }
+          ],
+          "content_features": [
+            {
+              "name": "content_growth_rate_30d",
+              "type": "numeric"
+            },
+            {
+              "name": "content_volume_in_scope",
+              "type": "numeric"
+            },
+            {
+              "name": "sensitivity_distribution",
+              "type": "array"
+            },
+            {
+              "name": "new_content_rate_daily",
+              "type": "numeric"
+            }
+          ],
+          "policy_features": [
+            {
+              "name": "policy_type",
+              "type": "categorical"
+            },
+            {
+              "name": "policy_complexity_score",
+              "type": "numeric"
+            },
+            {
+              "name": "scope_size_users",
+              "type": "numeric"
+            },
+            {
+              "name": "exception_count",
+              "type": "numeric"
+            },
+            {
+              "name": "policy_age_days",
+              "type": "numeric"
+            }
+          ],
+          "behavioral_features": [
+            {
+              "name": "user_compliance_avg_in_scope",
+              "type": "numeric"
+            },
+            {
+              "name": "admin_engagement_score",
+              "type": "numeric"
+            },
+            {
+              "name": "recent_policy_changes",
+              "type": "boolean"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "policy_scope_snapshots",
+              "columns": [
+                {
+                  "name": "snapshot_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "scope_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "snapshot_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "is_compliant",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "compliance_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "content_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "user_count",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": "1000 policy-scope pairs \u00d7 365 days"
+            },
+            {
+              "name": "violation_events",
+              "columns": [
+                {
+                  "name": "violation_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "scope_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "violation_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "violation_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "severity",
+                  "type": "STRING"
+                }
+              ]
+            },
+            {
+              "name": "policy_configurations",
+              "columns": [
+                {
+                  "name": "policy_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_rules",
+                  "type": "JSON"
+                },
+                {
+                  "name": "created_date",
+                  "type": "DATE"
+                }
+              ]
+            }
+          ],
+          "labeling": {
+            "positive": "Violation occurred within 30 days of snapshot",
+            "negative": "No violation within 30 days of snapshot",
+            "censored": "Observation window ended before 30 days (for survival analysis)"
+          }
+        },
+        "experiment_design": {
+          "classification_vs_survival": "Compare binary classification vs. survival model for actionability",
+          "policy_stratification": "Evaluate performance by policy type (retention, sharing, access)",
+          "horizon_experiments": [
+            "7_day",
+            "30_day",
+            "60_day",
+            "90_day"
+          ],
+          "feature_importance": "SHAP analysis for policy-specific risk factors"
+        },
+        "evaluation_metrics": {
+          "classification": {
+            "auc_roc": {
+              "target": 0.8
+            },
+            "precision_at_10pct": {
+              "target": 0.7
+            },
+            "recall": {
+              "target": 0.75
+            }
+          },
+          "survival": {
+            "c_index": {
+              "target": 0.75
+            },
+            "brier_score": {
+              "target": "<0.15"
+            }
+          },
+          "alert_actionability": {
+            "lead_time": {
+              "target": ">14 days before violation"
+            },
+            "intervention_success_rate": "Track % of predicted violations prevented"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_compliance_snapshots",
+              "raw_violation_logs"
+            ],
+            "silver": [
+              "enriched_policy_scope_features",
+              "compliance_time_series"
+            ],
+            "gold": [
+              "compliance_risk_scores",
+              "predicted_violations",
+              "intervention_queue"
+            ]
+          },
+          "prediction_pipeline": {
+            "frequency": "Weekly",
+            "output": "Risk scores and predicted violations for next 30/60/90 days"
+          },
+          "governance_integration": "Push high-risk items to AvePoint governance queue"
+        },
+        "python_packages": [
+          {
+            "name": "lightgbm",
+            "version": ">=4.1.0"
+          },
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "scikit-survival",
+            "version": ">=0.22.0"
+          },
+          {
+            "name": "lifelines",
+            "version": ">=0.27.0"
+          },
+          {
+            "name": "shap",
+            "version": ">=0.43.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Compliance risk score per policy-scope",
+            "secondary": "Predicted violation date range",
+            "tertiary": "Proactive remediation recommendations"
+          },
+          "visualization": [
+            "Risk heatmap by policy type",
+            "Time-to-violation Gantt chart",
+            "Compliance trend forecasts",
+            "Intervention success tracking"
+          ],
+          "workflow_integration": {
+            "proactive_review": "Trigger access review before predicted violation",
+            "alerts": "Notify compliance team of high-risk items",
+            "audit_prep": "Pre-audit risk assessment report"
+          },
+          "roi_metrics": {
+            "primary": "Audit findings prevented",
+            "secondary": "Compliance team time saved",
+            "calculation": "Findings_prevented \u00d7 avg_remediation_cost"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-14",
+      "name": "Configuration Drift Detection",
+      "specification": {
+        "model_architecture": {
+          "configuration_encoding": {
+            "method": "Multi-hot encoding for categorical settings + normalization for numeric",
+            "vector_dim": "~500 dimensions for typical tenant config"
+          },
+          "anomaly_detection": {
+            "algorithm": "One-Class SVM with RBF kernel",
+            "training": "Fit on historical configuration states for tenant",
+            "alternative": "Autoencoder for complex configuration spaces"
+          },
+          "critical_change_rules": {
+            "layer": "Rule-based overlay for known high-risk changes",
+            "examples": [
+              "Admin role grants",
+              "Conditional access policy disable",
+              "MFA bypass addition"
+            ]
+          },
+          "multi_tenant_baseline": {
+            "approach": "Cluster tenants by profile, compare within cluster",
+            "features": "Size, industry, security posture score"
+          }
+        },
+        "feature_engineering": {
+          "configuration_state": [
+            {
+              "name": "setting_vector",
+              "type": "multi-hot",
+              "description": "Current config as encoded vector"
+            },
+            {
+              "name": "settings_changed_count",
+              "type": "numeric"
+            },
+            {
+              "name": "high_risk_settings_changed",
+              "type": "numeric"
+            }
+          ],
+          "change_features": [
+            {
+              "name": "delta_from_previous",
+              "type": "numeric",
+              "description": "Cosine distance from last snapshot"
+            },
+            {
+              "name": "change_frequency_7d",
+              "type": "numeric"
+            },
+            {
+              "name": "change_time_of_day",
+              "type": "categorical"
+            },
+            {
+              "name": "change_day_of_week",
+              "type": "categorical"
+            }
+          ],
+          "context_features": [
+            {
+              "name": "changing_admin_id",
+              "type": "categorical"
+            },
+            {
+              "name": "admin_change_history",
+              "type": "numeric"
+            },
+            {
+              "name": "is_service_account",
+              "type": "boolean"
+            },
+            {
+              "name": "change_scope",
+              "type": "categorical"
+            }
+          ],
+          "benchmark_features": [
+            {
+              "name": "deviation_from_peer_baseline",
+              "type": "numeric"
+            },
+            {
+              "name": "industry_compliance_gap",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "configuration_snapshots",
+              "columns": [
+                {
+                  "name": "snapshot_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tenant_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "snapshot_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "configuration_json",
+                  "type": "JSON"
+                },
+                {
+                  "name": "encoded_vector",
+                  "type": "ARRAY<FLOAT>"
+                }
+              ],
+              "frequency": "Daily snapshots"
+            },
+            {
+              "name": "configuration_changes",
+              "columns": [
+                {
+                  "name": "change_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tenant_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "change_timestamp",
+                  "type": "TIMESTAMP"
+                },
+                {
+                  "name": "setting_path",
+                  "type": "STRING"
+                },
+                {
+                  "name": "old_value",
+                  "type": "STRING"
+                },
+                {
+                  "name": "new_value",
+                  "type": "STRING"
+                },
+                {
+                  "name": "changed_by",
+                  "type": "STRING"
+                }
+              ]
+            },
+            {
+              "name": "baseline_configurations",
+              "columns": [
+                {
+                  "name": "baseline_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "tenant_cluster",
+                  "type": "STRING"
+                },
+                {
+                  "name": "baseline_vector",
+                  "type": "ARRAY<FLOAT>"
+                },
+                {
+                  "name": "created_date",
+                  "type": "DATE"
+                }
+              ]
+            }
+          ],
+          "drift_injection": {
+            "legitimate": "Planned security hardening, license changes",
+            "accidental": "Automation errors, misconfiguration",
+            "malicious": "Privilege escalation, security weakening, persistence mechanisms"
+          }
+        },
+        "experiment_design": {
+          "algorithm_comparison": [
+            "One-Class SVM",
+            "Isolation Forest",
+            "Autoencoder",
+            "Local Outlier Factor"
+          ],
+          "threshold_tuning": "Optimize for 5-10 alerts per day",
+          "critical_rule_validation": "Ensure 100% coverage of known critical changes",
+          "multi_tenant_vs_single": "Compare per-tenant models vs. clustered baseline approach"
+        },
+        "evaluation_metrics": {
+          "drift_detection": {
+            "recall_malicious": {
+              "target": 0.95
+            },
+            "precision": {
+              "target": 0.6
+            },
+            "false_positive_rate": {
+              "target": "<5 spurious alerts per day"
+            }
+          },
+          "time_to_detect": {
+            "target": "<4 hours for critical changes"
+          },
+          "alert_actionability": "Security team finds 70%+ of alerts warrant investigation"
+        },
+        "fabric_workload_structure": {
+          "ingestion": {
+            "source": "Microsoft Graph API for tenant config, AvePoint policy snapshots",
+            "frequency": "Hourly for change events, daily for full snapshots"
+          },
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_config_snapshots",
+              "raw_change_events"
+            ],
+            "silver": [
+              "encoded_configs",
+              "change_features"
+            ],
+            "gold": [
+              "drift_alerts",
+              "config_health_score",
+              "remediation_queue"
+            ]
+          },
+          "alerting": {
+            "real_time": "Critical rule matches within 15 minutes",
+            "batch": "Anomaly scoring every 4 hours"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "pyod",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "category_encoders",
+            "version": ">=2.6.0"
+          },
+          {
+            "name": "ruptures",
+            "version": ">=1.1.0",
+            "purpose": "Changepoint detection"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Configuration drift alerts with severity",
+            "secondary": "Configuration health score",
+            "tertiary": "Drift remediation recommendations"
+          },
+          "visualization": [
+            "Config drift timeline",
+            "Anomaly heatmap by setting category",
+            "Peer comparison dashboard"
+          ],
+          "remediation_workflow": {
+            "auto_remediate": "Revert known-bad changes if policy enabled",
+            "alert_only": "Notify security team for investigation",
+            "document": "Log all changes for audit trail"
+          },
+          "roi_metrics": {
+            "primary": "Malicious config changes detected",
+            "secondary": "Mean-time-to-detect for config drift",
+            "tertiary": "Compliance drift prevented"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-15",
+      "name": "Policy Recommendation Engine",
+      "specification": {
+        "model_architecture": {
+          "collaborative_filtering": {
+            "algorithm": "Implicit ALS (Alternating Least Squares)",
+            "purpose": "Recommend policies based on similar tenant adoption patterns",
+            "factors": 64
+          },
+          "content_based": {
+            "algorithm": "Cosine similarity on tenant-policy feature vectors",
+            "purpose": "Match tenant profile to policy template characteristics"
+          },
+          "hybrid_ensemble": {
+            "method": "Weighted rank aggregation",
+            "weights": {
+              "collaborative": 0.4,
+              "content": 0.4,
+              "effectiveness": 0.2
+            }
+          },
+          "genai_explanation": {
+            "model": "Azure OpenAI GPT-4o-mini",
+            "purpose": "Generate natural language explanations for recommendations"
+          }
+        },
+        "feature_engineering": {
+          "tenant_profile": [
+            {
+              "name": "tenant_size_users",
+              "type": "numeric"
+            },
+            {
+              "name": "industry",
+              "type": "categorical"
+            },
+            {
+              "name": "regulatory_regime",
+              "type": "multi-hot",
+              "values": [
+                "GDPR",
+                "HIPAA",
+                "SOX",
+                "CCPA",
+                "ITAR"
+              ]
+            },
+            {
+              "name": "security_posture_score",
+              "type": "numeric"
+            },
+            {
+              "name": "content_sensitivity_distribution",
+              "type": "array"
+            }
+          ],
+          "behavioral_features": [
+            {
+              "name": "user_compliance_rate",
+              "type": "numeric"
+            },
+            {
+              "name": "admin_engagement_level",
+              "type": "categorical"
+            },
+            {
+              "name": "current_policy_count",
+              "type": "numeric"
+            }
+          ],
+          "policy_features": [
+            {
+              "name": "policy_type",
+              "type": "categorical"
+            },
+            {
+              "name": "complexity_score",
+              "type": "numeric"
+            },
+            {
+              "name": "avg_effectiveness",
+              "type": "numeric"
+            },
+            {
+              "name": "adoption_rate",
+              "type": "numeric"
+            },
+            {
+              "name": "regulatory_alignment",
+              "type": "multi-hot"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "tenant_profiles",
+              "columns": [
+                {
+                  "name": "tenant_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "size_tier",
+                  "type": "STRING"
+                },
+                {
+                  "name": "industry",
+                  "type": "STRING"
+                },
+                {
+                  "name": "regulatory_requirements",
+                  "type": "ARRAY<STRING>"
+                },
+                {
+                  "name": "security_score",
+                  "type": "FLOAT"
+                }
+              ],
+              "cardinality": 5000
+            },
+            {
+              "name": "policy_deployments",
+              "columns": [
+                {
+                  "name": "tenant_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_template_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "deployed_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "effectiveness_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "still_active",
+                  "type": "BOOLEAN"
+                }
+              ],
+              "cardinality": 50000
+            },
+            {
+              "name": "policy_templates",
+              "columns": [
+                {
+                  "name": "template_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "policy_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "description",
+                  "type": "STRING"
+                },
+                {
+                  "name": "configuration_json",
+                  "type": "JSON"
+                },
+                {
+                  "name": "regulatory_tags",
+                  "type": "ARRAY<STRING>"
+                }
+              ],
+              "cardinality": 200
+            }
+          ]
+        },
+        "experiment_design": {
+          "collaborative_vs_content": "Compare recommendation quality of each approach independently",
+          "hybrid_weight_tuning": "Grid search for optimal ensemble weights",
+          "explanation_quality": "Human evaluation of GenAI explanations (relevance, clarity)",
+          "ab_testing": "Compare recommendation adoption rate vs. manual policy selection"
+        },
+        "evaluation_metrics": {
+          "recommendation_quality": {
+            "hit_rate_at_5": {
+              "target": 0.6,
+              "description": "60% of top-5 recommendations adopted"
+            },
+            "ndcg_at_10": {
+              "target": 0.5
+            }
+          },
+          "policy_effectiveness": {
+            "compliance_improvement": {
+              "target": "+15% compliance after recommended policy adoption"
+            }
+          },
+          "explanation_quality": {
+            "human_rating": {
+              "target": 4.0,
+              "scale": "1-5"
+            },
+            "coherence": {
+              "target": 0.85
+            }
+          },
+          "coverage": {
+            "target": 0.9,
+            "description": "90% of admin use cases have relevant recommendations"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_tenant_configs",
+              "raw_policy_deployments"
+            ],
+            "silver": [
+              "tenant_features",
+              "policy_effectiveness_metrics"
+            ],
+            "gold": [
+              "recommendations",
+              "recommendation_explanations",
+              "adoption_tracking"
+            ]
+          },
+          "recommendation_pipeline": {
+            "trigger": "On-demand when admin accesses policy configuration",
+            "batch": "Weekly refresh of recommendation rankings"
+          },
+          "explanation_generation": {
+            "service": "Azure OpenAI",
+            "caching": "Cache explanations for common recommendations"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "implicit",
+            "version": ">=0.7.0",
+            "purpose": "Collaborative filtering"
+          },
+          {
+            "name": "lightfm",
+            "version": ">=1.17",
+            "purpose": "Hybrid recommendations"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "openai",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "recmetrics",
+            "version": ">=0.1.4",
+            "purpose": "Recommendation evaluation"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Ranked policy recommendations with confidence scores",
+            "secondary": "Natural language explanations",
+            "tertiary": "One-click apply configuration"
+          },
+          "visualization": [
+            "Recommendation cards with explanations",
+            "Policy comparison dashboard",
+            "Peer benchmark visualization"
+          ],
+          "admin_workflow": {
+            "browse": "View recommendations in policy configuration UI",
+            "preview": "See expected impact before applying",
+            "apply": "One-click policy deployment"
+          },
+          "roi_metrics": {
+            "primary": "Time-to-policy-maturity reduction",
+            "target": "60-70% faster governance setup",
+            "secondary": "Compliance improvement from recommended policies"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-16",
+      "name": "Regulatory Readiness Scoring",
+      "specification": {
+        "model_architecture": {
+          "requirement_extraction": {
+            "model": "spaCy NER + custom rules",
+            "purpose": "Extract structured requirements from regulatory text",
+            "output": "Requirement ID, text, control type, criticality"
+          },
+          "config_mapping": {
+            "algorithm": "Multi-label classification (BERT fine-tuned)",
+            "purpose": "Map configurations to satisfied requirements",
+            "training": "Expert-labeled config-requirement pairs"
+          },
+          "score_aggregation": {
+            "formula": "Readiness_Score = \u03a3(requirement_satisfied \u00d7 criticality_weight) / \u03a3(criticality_weight)",
+            "output": "0-100 score per regulation"
+          },
+          "gap_analysis_genai": {
+            "model": "Azure OpenAI GPT-4o",
+            "purpose": "Generate narrative gap analysis and remediation guidance"
+          }
+        },
+        "feature_engineering": {
+          "configuration_features": [
+            {
+              "name": "current_config_vector",
+              "type": "multi-hot"
+            },
+            {
+              "name": "policy_coverage_by_type",
+              "type": "array"
+            },
+            {
+              "name": "security_settings_enabled",
+              "type": "array"
+            }
+          ],
+          "requirement_features": [
+            {
+              "name": "requirement_text_embedding",
+              "type": "vector"
+            },
+            {
+              "name": "control_type",
+              "type": "categorical",
+              "values": [
+                "technical",
+                "administrative",
+                "physical"
+              ]
+            },
+            {
+              "name": "criticality",
+              "type": "ordinal",
+              "values": [
+                "critical",
+                "major",
+                "minor"
+              ]
+            }
+          ],
+          "evidence_features": [
+            {
+              "name": "documentation_completeness",
+              "type": "numeric"
+            },
+            {
+              "name": "audit_trail_depth_days",
+              "type": "numeric"
+            },
+            {
+              "name": "last_review_date",
+              "type": "date"
+            }
+          ],
+          "historical_features": [
+            {
+              "name": "past_compliance_rate",
+              "type": "numeric"
+            },
+            {
+              "name": "remediation_velocity",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "regulatory_requirements",
+              "columns": [
+                {
+                  "name": "regulation",
+                  "type": "STRING",
+                  "values": [
+                    "GDPR",
+                    "HIPAA",
+                    "SOX",
+                    "CCPA",
+                    "NIST_CSF"
+                  ]
+                },
+                {
+                  "name": "requirement_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "requirement_text",
+                  "type": "STRING"
+                },
+                {
+                  "name": "control_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "criticality",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 2000
+            },
+            {
+              "name": "config_requirement_mapping",
+              "columns": [
+                {
+                  "name": "config_setting",
+                  "type": "STRING"
+                },
+                {
+                  "name": "requirement_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "satisfaction_level",
+                  "type": "STRING",
+                  "values": [
+                    "full",
+                    "partial",
+                    "none"
+                  ]
+                }
+              ],
+              "cardinality": 10000,
+              "note": "Expert-labeled training data"
+            },
+            {
+              "name": "tenant_configs",
+              "columns": [
+                {
+                  "name": "tenant_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "config_snapshot",
+                  "type": "JSON"
+                },
+                {
+                  "name": "snapshot_date",
+                  "type": "DATE"
+                }
+              ]
+            }
+          ]
+        },
+        "experiment_design": {
+          "requirement_extraction": "Evaluate NER model on held-out regulatory documents",
+          "mapping_classification": "Multi-label classification experiments with different architectures",
+          "score_calibration": "Validate scores against actual audit outcomes",
+          "gap_analysis_quality": "Expert review of generated gap narratives"
+        },
+        "evaluation_metrics": {
+          "requirement_extraction": {
+            "precision": {
+              "target": 0.9
+            },
+            "recall": {
+              "target": 0.85
+            }
+          },
+          "config_mapping": {
+            "f1_micro": {
+              "target": 0.8
+            },
+            "f1_macro": {
+              "target": 0.75
+            }
+          },
+          "score_accuracy": {
+            "correlation_with_audit": {
+              "target": 0.7
+            }
+          },
+          "gap_analysis": {
+            "actionability_rating": {
+              "target": 4.0,
+              "scale": "1-5"
+            }
+          }
+        },
+        "fabric_workload_structure": {
+          "knowledge_base": {
+            "content": "Pre-processed regulatory requirements by framework",
+            "update": "Manual refresh when regulations change"
+          },
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_regulatory_docs",
+              "raw_tenant_configs"
+            ],
+            "silver": [
+              "parsed_requirements",
+              "config_mappings"
+            ],
+            "gold": [
+              "readiness_scores",
+              "gap_inventory",
+              "remediation_plans"
+            ]
+          },
+          "assessment_pipeline": {
+            "trigger": "On-demand or weekly scheduled",
+            "output": "Scores by regulation, gap list, narrative report"
+          }
+        },
+        "python_packages": [
+          {
+            "name": "spacy",
+            "version": ">=3.7.0"
+          },
+          {
+            "name": "transformers",
+            "version": ">=4.35.0"
+          },
+          {
+            "name": "openai",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Readiness scores per regulation (0-100)",
+            "secondary": "Gap inventory with remediation priorities",
+            "tertiary": "Narrative gap analysis report"
+          },
+          "visualization": [
+            "Compliance radar chart by regulation",
+            "Gap priority matrix (criticality \u00d7 effort)",
+            "Readiness trend over time",
+            "Peer benchmark comparison"
+          ],
+          "audit_workflow": {
+            "evidence_package": "Auto-compiled evidence for each requirement",
+            "auditor_view": "Read-only dashboard for external auditors"
+          },
+          "roi_metrics": {
+            "primary": "Audit preparation time reduction",
+            "target": "40-60% faster prep",
+            "secondary": "Audit findings prevented through proactive remediation"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-17",
+      "name": "Retention Rule Optimization",
+      "specification": {
+        "model_architecture": {
+          "value_decay_prediction": {
+            "algorithm": "Gradient Boosted Survival Trees",
+            "target": "Probability of content access at time t given no access since t0",
+            "output": "Access probability curve over time"
+          },
+          "multi_objective_optimization": {
+            "framework": "Pareto optimization using NSGA-II",
+            "objectives": [
+              "minimize_storage_cost",
+              "minimize_compliance_risk",
+              "maximize_business_value_retention"
+            ],
+            "constraints": [
+              "retention >= regulatory_minimum",
+              "no_deletion_of_active_content"
+            ]
+          },
+          "simulation": {
+            "purpose": "What-if analysis for retention policy changes",
+            "method": "Monte Carlo simulation of content lifecycle under different retention rules"
+          }
+        },
+        "feature_engineering": {
+          "content_features": [
+            {
+              "name": "content_type",
+              "type": "categorical"
+            },
+            {
+              "name": "sensitivity_label",
+              "type": "ordinal"
+            },
+            {
+              "name": "age_days",
+              "type": "numeric"
+            },
+            {
+              "name": "file_size_mb",
+              "type": "numeric"
+            }
+          ],
+          "usage_features": [
+            {
+              "name": "access_frequency_lifetime",
+              "type": "numeric"
+            },
+            {
+              "name": "access_recency_days",
+              "type": "numeric"
+            },
+            {
+              "name": "access_trend_slope",
+              "type": "numeric"
+            },
+            {
+              "name": "unique_accessors_count",
+              "type": "numeric"
+            }
+          ],
+          "regulatory_features": [
+            {
+              "name": "regulatory_min_retention_days",
+              "type": "numeric"
+            },
+            {
+              "name": "legal_hold_flag",
+              "type": "boolean"
+            },
+            {
+              "name": "retention_category",
+              "type": "categorical"
+            }
+          ],
+          "cost_features": [
+            {
+              "name": "current_storage_tier",
+              "type": "categorical"
+            },
+            {
+              "name": "storage_cost_per_gb_month",
+              "type": "numeric"
+            },
+            {
+              "name": "archive_tier_cost_per_gb_month",
+              "type": "numeric"
+            },
+            {
+              "name": "retrieval_cost_per_gb",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "content_inventory",
+              "columns": [
+                {
+                  "name": "content_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "content_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "created_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "last_access_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "size_mb",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "retention_category",
+                  "type": "STRING"
+                }
+              ],
+              "cardinality": 2000000
+            },
+            {
+              "name": "retention_outcomes",
+              "columns": [
+                {
+                  "name": "content_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "retention_days",
+                  "type": "INT"
+                },
+                {
+                  "name": "was_accessed_post_retention",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "access_count_post_retention",
+                  "type": "INT"
+                }
+              ],
+              "note": "Historical outcomes for content that was retained/deleted"
+            },
+            {
+              "name": "regulatory_requirements",
+              "columns": [
+                {
+                  "name": "content_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "regulation",
+                  "type": "STRING"
+                },
+                {
+                  "name": "min_retention_days",
+                  "type": "INT"
+                }
+              ]
+            }
+          ]
+        },
+        "experiment_design": {
+          "value_decay_models": "Compare survival models (Cox, RSF, DeepSurv)",
+          "optimization_objectives": "Experiment with different objective weightings",
+          "simulation_validation": "Backtest optimization recommendations against historical data",
+          "constraint_sensitivity": "Analyze impact of different regulatory constraint levels"
+        },
+        "evaluation_metrics": {
+          "prediction_accuracy": {
+            "c_index": {
+              "target": 0.75
+            },
+            "brier_score": {
+              "target": "<0.15"
+            }
+          },
+          "optimization": {
+            "pareto_front_coverage": "Number of non-dominated solutions",
+            "objective_achievement": "% improvement over baseline policy"
+          },
+          "business_validation": {
+            "storage_savings_accuracy": "Projected vs. actual savings",
+            "false_deletion_rate": {
+              "target": "<0.1%",
+              "description": "Content deleted that was later requested"
+            }
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_content_metadata",
+              "raw_access_logs"
+            ],
+            "silver": [
+              "content_lifecycle_features",
+              "retention_requirements"
+            ],
+            "gold": [
+              "optimized_retention_rules",
+              "savings_projections",
+              "policy_recommendations"
+            ]
+          },
+          "optimization_pipeline": {
+            "trigger": "Monthly",
+            "output": "Recommended retention rules by content category"
+          },
+          "policy_integration": "Push recommended rules to AvePoint lifecycle management"
+        },
+        "python_packages": [
+          {
+            "name": "scikit-survival",
+            "version": ">=0.22.0"
+          },
+          {
+            "name": "pymoo",
+            "version": ">=0.6.0",
+            "purpose": "Multi-objective optimization"
+          },
+          {
+            "name": "scipy",
+            "version": ">=1.11.0"
+          },
+          {
+            "name": "simpy",
+            "version": ">=4.1.0",
+            "purpose": "Process simulation"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Optimized retention rules by content category",
+            "secondary": "Storage savings projection",
+            "tertiary": "Compliance risk assessment"
+          },
+          "visualization": [
+            "Pareto frontier (cost vs. risk tradeoff)",
+            "Retention landscape heatmap",
+            "Savings projection chart",
+            "Policy comparison dashboard"
+          ],
+          "policy_automation": "One-click apply optimized retention rules",
+          "roi_metrics": {
+            "primary": "Storage cost reduction",
+            "target": "15-30% savings",
+            "secondary": "Over-retention risk reduction"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-18",
+      "name": "Storage Growth Forecasting",
+      "specification": {
+        "model_architecture": {
+          "forecasting_algorithm": {
+            "primary": "Prophet",
+            "alternative": "NeuralProphet for complex patterns",
+            "justification": "Handles multiple seasonality, holidays, and trend changepoints"
+          },
+          "hierarchical_forecasting": {
+            "levels": [
+              "content_type",
+              "department",
+              "site_collection",
+              "tenant"
+            ],
+            "reconciliation": "MinTrace optimal combination (bottom-up with adjustment)"
+          },
+          "exogenous_regressors": [
+            "headcount",
+            "project_count",
+            "seasonal_campaigns"
+          ],
+          "prediction_intervals": {
+            "method": "MCMC sampling",
+            "levels": [
+              0.8,
+              0.95
+            ]
+          }
+        },
+        "feature_engineering": {
+          "target_variable": {
+            "name": "storage_gb",
+            "granularity": [
+              "daily",
+              "weekly"
+            ],
+            "scope": [
+              "tenant",
+              "department",
+              "site_collection",
+              "content_type"
+            ]
+          },
+          "calendar_features": [
+            {
+              "name": "fiscal_quarter",
+              "type": "categorical"
+            },
+            {
+              "name": "is_quarter_end",
+              "type": "boolean"
+            },
+            {
+              "name": "is_year_end",
+              "type": "boolean"
+            },
+            {
+              "name": "holiday_proximity",
+              "type": "numeric"
+            }
+          ],
+          "exogenous_features": [
+            {
+              "name": "employee_count",
+              "type": "numeric"
+            },
+            {
+              "name": "active_projects",
+              "type": "numeric"
+            },
+            {
+              "name": "new_user_onboarding_count",
+              "type": "numeric"
+            },
+            {
+              "name": "merger_event_flag",
+              "type": "boolean"
+            }
+          ],
+          "lagged_features": [
+            {
+              "name": "storage_lag_7d",
+              "type": "numeric"
+            },
+            {
+              "name": "storage_lag_30d",
+              "type": "numeric"
+            },
+            {
+              "name": "growth_rate_rolling_30d",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "storage_snapshots",
+              "columns": [
+                {
+                  "name": "snapshot_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "scope_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "scope_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "storage_gb",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "file_count",
+                  "type": "INT"
+                }
+              ],
+              "time_range": "2 years",
+              "frequency": "daily"
+            },
+            {
+              "name": "exogenous_events",
+              "columns": [
+                {
+                  "name": "event_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "event_type",
+                  "type": "STRING"
+                },
+                {
+                  "name": "event_impact",
+                  "type": "STRING"
+                }
+              ]
+            },
+            {
+              "name": "hierarchy_definition",
+              "columns": [
+                {
+                  "name": "scope_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "parent_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "level",
+                  "type": "STRING"
+                }
+              ]
+            }
+          ],
+          "pattern_injection": {
+            "trend": "Linear growth 3% per month",
+            "weekly_seasonality": "5% higher on Mon-Thu",
+            "monthly_seasonality": "10% spike at month end",
+            "quarterly_seasonality": "15% spike at quarter end"
+          }
+        },
+        "experiment_design": {
+          "model_comparison": [
+            "Prophet",
+            "NeuralProphet",
+            "ARIMA",
+            "ETS",
+            "LightGBM"
+          ],
+          "horizon_experiments": [
+            30,
+            90,
+            180,
+            365
+          ],
+          "hierarchical_methods": [
+            "bottom_up",
+            "top_down",
+            "middle_out",
+            "MinTrace"
+          ],
+          "exogenous_ablation": "Test forecast accuracy with/without exogenous regressors"
+        },
+        "evaluation_metrics": {
+          "point_forecast": {
+            "mape": {
+              "target": "<10%"
+            },
+            "mae": {},
+            "rmse": {}
+          },
+          "interval_forecast": {
+            "coverage_80": {
+              "target": 0.8
+            },
+            "coverage_95": {
+              "target": 0.95
+            },
+            "interval_sharpness": "Minimize interval width while maintaining coverage"
+          },
+          "hierarchical_coherence": "Forecasts sum correctly across hierarchy",
+          "budget_accuracy": "Forecast vs. actual cost variance"
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_storage_metrics"
+            ],
+            "silver": [
+              "storage_time_series",
+              "exogenous_features"
+            ],
+            "gold": [
+              "forecasts_by_scope",
+              "budget_projections",
+              "forecast_accuracy_tracking"
+            ]
+          },
+          "forecast_pipeline": {
+            "trigger": "Weekly",
+            "horizons": [
+              30,
+              90,
+              180,
+              365
+            ],
+            "output": "Forecasts at all hierarchy levels"
+          },
+          "monitoring": "Track forecast accuracy, trigger retraining if MAPE > 15%"
+        },
+        "python_packages": [
+          {
+            "name": "prophet",
+            "version": ">=1.1.0"
+          },
+          {
+            "name": "neuralprophet",
+            "version": ">=0.7.0"
+          },
+          {
+            "name": "statsforecast",
+            "version": ">=1.6.0"
+          },
+          {
+            "name": "hierarchicalforecast",
+            "version": ">=0.3.0"
+          },
+          {
+            "name": "plotly",
+            "version": ">=5.18.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Storage forecasts by scope with prediction intervals",
+            "secondary": "Budget projection (storage cost forecast)",
+            "tertiary": "Capacity planning recommendations"
+          },
+          "visualization": [
+            "Interactive forecast chart with confidence bands",
+            "Budget variance projection",
+            "Department comparison forecasts",
+            "Forecast accuracy tracking"
+          ],
+          "finance_integration": {
+            "budget_export": "Monthly forecast export for finance planning",
+            "variance_alerts": "Alert when forecast exceeds budget threshold"
+          },
+          "roi_metrics": {
+            "primary": "Budget accuracy improvement",
+            "secondary": "Over-provisioning reduction",
+            "calculation": "Avoided excess capacity cost"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-19",
+      "name": "Archive Candidate Scoring",
+      "specification": {
+        "model_architecture": {
+          "access_probability_model": {
+            "algorithm": "XGBoost Classifier",
+            "target": "will_be_accessed_in_90_days (boolean)",
+            "output": "Probability of future access"
+          },
+          "score_formula": "Archive_Score = 100 \u00d7 (1 - access_probability) \u00d7 (1 - legal_hold_flag)",
+          "calibration": "Isotonic regression for well-calibrated probabilities",
+          "cost_benefit_layer": {
+            "formula": "Net_Benefit = storage_savings - (access_probability \u00d7 retrieval_cost)",
+            "purpose": "Rank by economic value of archival"
+          }
+        },
+        "feature_engineering": {
+          "access_features": [
+            {
+              "name": "days_since_last_access",
+              "type": "numeric"
+            },
+            {
+              "name": "access_count_90d",
+              "type": "numeric"
+            },
+            {
+              "name": "access_count_365d",
+              "type": "numeric"
+            },
+            {
+              "name": "access_trend_slope",
+              "type": "numeric"
+            },
+            {
+              "name": "unique_accessors_90d",
+              "type": "numeric"
+            }
+          ],
+          "content_features": [
+            {
+              "name": "content_type",
+              "type": "categorical"
+            },
+            {
+              "name": "file_size_mb",
+              "type": "numeric"
+            },
+            {
+              "name": "age_days",
+              "type": "numeric"
+            },
+            {
+              "name": "sensitivity_label",
+              "type": "ordinal"
+            },
+            {
+              "name": "version_count",
+              "type": "numeric"
+            }
+          ],
+          "context_features": [
+            {
+              "name": "author_is_active",
+              "type": "boolean"
+            },
+            {
+              "name": "project_status",
+              "type": "categorical"
+            },
+            {
+              "name": "in_active_workspace",
+              "type": "boolean"
+            }
+          ],
+          "cost_features": [
+            {
+              "name": "current_storage_cost_monthly",
+              "type": "numeric"
+            },
+            {
+              "name": "archive_storage_cost_monthly",
+              "type": "numeric"
+            },
+            {
+              "name": "retrieval_cost_per_access",
+              "type": "numeric"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "content_access_history",
+              "columns": [
+                {
+                  "name": "content_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "last_access_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "access_count_30d",
+                  "type": "INT"
+                },
+                {
+                  "name": "access_count_90d",
+                  "type": "INT"
+                },
+                {
+                  "name": "access_count_365d",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": 2000000
+            },
+            {
+              "name": "archive_outcomes",
+              "columns": [
+                {
+                  "name": "content_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "archive_date",
+                  "type": "DATE"
+                },
+                {
+                  "name": "was_accessed_post_archive",
+                  "type": "BOOLEAN"
+                },
+                {
+                  "name": "retrieval_count",
+                  "type": "INT"
+                }
+              ],
+              "note": "Historical outcomes for archived content"
+            }
+          ],
+          "label_generation": "Content archived AND not accessed in 90 days post-archive = good archive candidate"
+        },
+        "experiment_design": {
+          "model_comparison": [
+            "XGBoost",
+            "LightGBM",
+            "Logistic Regression"
+          ],
+          "threshold_optimization": "Optimize archive threshold for cost-benefit balance",
+          "false_positive_analysis": "Review archived content that was subsequently requested",
+          "cost_benefit_sensitivity": "Test different storage tier price assumptions"
+        },
+        "evaluation_metrics": {
+          "classification": {
+            "precision": {
+              "target": 0.9,
+              "rationale": "Minimize archiving frequently accessed content"
+            },
+            "recall": {
+              "target": 0.7
+            }
+          },
+          "business_validation": {
+            "retrieval_rate": {
+              "target": "<2%",
+              "description": "% of archived content later retrieved"
+            },
+            "storage_savings_accuracy": "Projected vs. actual savings"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_content_metadata",
+              "raw_access_events"
+            ],
+            "silver": [
+              "content_access_features",
+              "cost_parameters"
+            ],
+            "gold": [
+              "archive_scores",
+              "archive_candidates",
+              "archive_campaign_tracking"
+            ]
+          },
+          "scoring_pipeline": {
+            "trigger": "Weekly",
+            "output": "Archive candidates ranked by score and savings potential"
+          },
+          "archive_integration": "Push candidates to AvePoint Opus for archival workflow"
+        },
+        "python_packages": [
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "lightgbm",
+            "version": ">=4.1.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Archive candidate list with scores",
+            "secondary": "Storage savings projection per candidate",
+            "tertiary": "Batch archive recommendations"
+          },
+          "visualization": [
+            "Archive opportunity dashboard",
+            "Savings waterfall by content type",
+            "Archive candidate funnel"
+          ],
+          "archive_workflow": {
+            "auto_archive": "Archive if score > 95 AND no legal hold",
+            "review": "Surface for review if score 70-95",
+            "retain": "Keep in hot storage if score < 70"
+          },
+          "roi_metrics": {
+            "primary": "Storage tier cost reduction",
+            "target": "20-40% of cold content moved to archive",
+            "secondary": "Retrieval rate (lower = better model)"
+          }
+        }
+      }
+    },
+    {
+      "id": "UC-20",
+      "name": "Migration Readiness Assessment",
+      "specification": {
+        "model_architecture": {
+          "complexity_scoring": {
+            "algorithm": "XGBoost Regressor",
+            "target": "migration_effort_hours (continuous)",
+            "features": "Permission complexity, content characteristics, customizations"
+          },
+          "batch_clustering": {
+            "algorithm": "K-Means",
+            "purpose": "Group similar content collections for batched migration",
+            "k": 10,
+            "features": "Size, complexity, dependencies"
+          },
+          "readiness_index": {
+            "formula": "Readiness = 100 - (complexity_score \u00d7 0.6 + remediation_effort \u00d7 0.4)",
+            "output": "0-100 score per content collection"
+          },
+          "remediation_estimation": {
+            "method": "Rule-based + ML hybrid",
+            "items": [
+              "permission_cleanup",
+              "metadata_completion",
+              "customization_remediation"
+            ]
+          }
+        },
+        "feature_engineering": {
+          "permission_features": [
+            {
+              "name": "permission_depth",
+              "type": "numeric"
+            },
+            {
+              "name": "inheritance_break_count",
+              "type": "numeric"
+            },
+            {
+              "name": "external_share_count",
+              "type": "numeric"
+            },
+            {
+              "name": "unique_permission_combinations",
+              "type": "numeric"
+            }
+          ],
+          "content_features": [
+            {
+              "name": "total_file_count",
+              "type": "numeric"
+            },
+            {
+              "name": "total_size_gb",
+              "type": "numeric"
+            },
+            {
+              "name": "file_type_diversity",
+              "type": "numeric"
+            },
+            {
+              "name": "avg_file_size_mb",
+              "type": "numeric"
+            },
+            {
+              "name": "metadata_completeness_pct",
+              "type": "numeric"
+            }
+          ],
+          "dependency_features": [
+            {
+              "name": "workflow_count",
+              "type": "numeric"
+            },
+            {
+              "name": "custom_code_detected",
+              "type": "boolean"
+            },
+            {
+              "name": "integration_count",
+              "type": "numeric"
+            },
+            {
+              "name": "linked_content_count",
+              "type": "numeric"
+            }
+          ],
+          "historical_features": [
+            {
+              "name": "similar_migration_effort_avg",
+              "type": "numeric"
+            },
+            {
+              "name": "source_platform_complexity",
+              "type": "categorical"
+            }
+          ]
+        },
+        "synthetic_dataset_schema": {
+          "tables": [
+            {
+              "name": "content_collections",
+              "columns": [
+                {
+                  "name": "collection_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "source_platform",
+                  "type": "STRING"
+                },
+                {
+                  "name": "file_count",
+                  "type": "INT"
+                },
+                {
+                  "name": "size_gb",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "permission_complexity_score",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "customization_count",
+                  "type": "INT"
+                }
+              ],
+              "cardinality": 10000
+            },
+            {
+              "name": "migration_outcomes",
+              "columns": [
+                {
+                  "name": "collection_id",
+                  "type": "STRING"
+                },
+                {
+                  "name": "migration_outcome",
+                  "type": "STRING",
+                  "values": [
+                    "smooth",
+                    "minor_issues",
+                    "major_remediation",
+                    "failed"
+                  ]
+                },
+                {
+                  "name": "actual_effort_hours",
+                  "type": "FLOAT"
+                },
+                {
+                  "name": "remediation_items",
+                  "type": "ARRAY<STRING>"
+                }
+              ],
+              "note": "Labeled from AvePoint Fly migration history"
+            }
+          ],
+          "outcome_labels": {
+            "smooth": "Migration completed within estimated time, no rollbacks",
+            "minor_issues": "Small remediation during migration, <10% overage",
+            "major_remediation": "Significant pre/post migration work, >25% overage",
+            "failed": "Migration could not complete, required restart"
+          }
+        },
+        "experiment_design": {
+          "complexity_prediction": "Regression model for effort estimation",
+          "outcome_classification": "Multi-class prediction of migration outcome",
+          "clustering_validation": "Migration success rate by cluster (validate groupings)",
+          "effort_estimation_accuracy": "Compare predicted vs. actual migration hours"
+        },
+        "evaluation_metrics": {
+          "complexity_prediction": {
+            "mae": {
+              "target": "<5 hours",
+              "description": "Effort estimation within 5 hours"
+            },
+            "r2": {
+              "target": 0.7
+            }
+          },
+          "outcome_classification": {
+            "accuracy": {
+              "target": 0.75
+            },
+            "smooth_precision": {
+              "target": 0.85,
+              "description": "Accurately identify easy migrations"
+            }
+          },
+          "batch_quality": {
+            "within_cluster_variance": "Low variance in migration effort within clusters"
+          }
+        },
+        "fabric_workload_structure": {
+          "lakehouse_tables": {
+            "bronze": [
+              "raw_content_inventory",
+              "raw_permission_report"
+            ],
+            "silver": [
+              "collection_features",
+              "complexity_metrics"
+            ],
+            "gold": [
+              "readiness_scores",
+              "migration_batches",
+              "remediation_checklist"
+            ]
+          },
+          "assessment_pipeline": {
+            "trigger": "On-demand for migration planning",
+            "output": "Readiness report, batch recommendations, remediation list"
+          },
+          "fly_integration": "Export assessment to AvePoint Fly for migration execution"
+        },
+        "python_packages": [
+          {
+            "name": "xgboost",
+            "version": ">=2.0.0"
+          },
+          {
+            "name": "scikit-learn",
+            "version": ">=1.3.0"
+          },
+          {
+            "name": "hdbscan",
+            "version": ">=0.8.33"
+          },
+          {
+            "name": "plotly",
+            "version": ">=5.18.0"
+          }
+        ],
+        "commercial_outcome": {
+          "output_artifact": {
+            "primary": "Readiness score per content collection",
+            "secondary": "Migration batch recommendations",
+            "tertiary": "Remediation checklist per collection"
+          },
+          "visualization": [
+            "Readiness heatmap by source location",
+            "Complexity distribution histogram",
+            "Batch plan Gantt chart",
+            "Remediation effort breakdown"
+          ],
+          "migration_planning": {
+            "sequencing": "Recommended migration order (easy first)",
+            "resource_planning": "Effort estimate for capacity planning",
+            "risk_identification": "High-complexity items for special handling"
+          },
+          "roi_metrics": {
+            "primary": "Migration timeline accuracy improvement",
+            "secondary": "Budget variance reduction",
+            "tertiary": "Failed migration prevention"
+          }
+        }
+      }
+    }
+  ]
+}
