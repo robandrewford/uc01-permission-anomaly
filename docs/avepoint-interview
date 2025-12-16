@@ -1,0 +1,50 @@
+# Scenario
+You’ve joined a mid-sized SaaS company as a Principal Data Scientist.
+
+The product team is concerned about user churn and wants to understand:
+
+* Why users are leaving
+* How to predict churn before it happens
+* What actions can improve retention
+* You may use AI-generated or synthetic data for this exercise.
+
+## Objective
+You are expected to lead the analysis and modeling effort as an individual contributor,
+while also demonstrating how you would mentor a junior team member through this project.
+
+## Project Components
+
+### Part 1: Problem Framing
+
+* Define the business problem
+* Propose success metrics
+* Identify risks and assumptions
+
+### Part 2: Data Exploration & Feature Engineering
+
+* Perform EDA
+* Engineer predictive features
+* Document your rationale
+
+### Part 3: Predictive Modeling
+
+Build a churn prediction model
+* Justify algorithm choice
+* Evaluate performance
+* Address class imbalance, data leakage, and interpretability
+
+### Part 4: Strategic Recommendations
+
+* Present 2–3 actionable insights
+* Discuss testing approaches
+
+### Part 5: Mentorship & Scalability
+
+* Explain how you’d mentor a junior team member
+* Outline high-level deployment architecture
+* Describe how you’d monitor model performance
+
+Deliverables:
+* Python Script: Clean, modular, and well-documented
+* Executive Summary: 5–7 slides or 1–2 pages (PDF or slides)
+* GitHub Repo: Include a README
