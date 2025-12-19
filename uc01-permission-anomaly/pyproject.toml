@@ -20,4 +20,5 @@ dependencies = [
     "azure-identity>=1.15.0",
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
+    "marimo>=0.18.4",
 ]
